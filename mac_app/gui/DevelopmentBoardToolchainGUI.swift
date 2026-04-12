@@ -319,7 +319,19 @@ struct AgentStatusSummaryResponse: Decodable {
     let updated_at: String?
     let runtime_status: ToolkitStatus?
     let last_reconcile_at: String?
+    let last_probe_at: String?
+    let refresh_in_progress: Bool?
     let staleness_ms: Int?
+}
+
+struct AgentActionPreflightResponse: Decodable {
+    let ok: Bool?
+    let ready: Bool?
+    let operation_id: String?
+    let board_id: String?
+    let variant_id: String?
+    let message: String?
+    let status_summary: AgentStatusSummaryResponse?
 }
 
 struct ToolkitTask: Decodable {
@@ -1457,6 +1469,18 @@ final class ToolkitViewModel: ObservableObject {
         }
     }
 
+    private func localAgentOperationPreflightMessage(operationID: String, boardID: String?, variantID: String?) async -> String? {
+        do {
+            let response = try await postLocalAgentActionPrecheck(operationID: operationID, boardID: boardID, variantID: variantID)
+            if let summary = response.status_summary {
+                applyLocalAgentStatusSummary(summary, silent: true)
+            }
+            return response.ready == true ? nil : (response.message ?? "本地 DBT Agent 动作预检未通过")
+        } catch {
+            return await boardOperationPreflightMessage(operationID: operationID, boardID: boardID, variantID: variantID)
+        }
+    }
+
     private func liveBoardConnectionReady() -> Bool {
         if connectedBoardID != nil || currentLiveCandidate != nil {
             return true
@@ -1737,13 +1761,39 @@ final class ToolkitViewModel: ObservableObject {
 
     func fetchLocalAgentStatusSummary() async throws -> AgentStatusSummaryResponse {
         var request = URLRequest(url: localAgentURL(path: "v1/status/summary"))
-        request.timeoutInterval = 4
+        request.timeoutInterval = 1.5
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw ToolkitGUIError.commandFailed("本地 DBT Agent 状态请求失败")
         }
         localAgentRunning = true
         return try JSONDecoder().decode(AgentStatusSummaryResponse.self, from: data)
+    }
+
+    func postLocalAgentActionPrecheck(
+        operationID: String,
+        boardID: String?,
+        variantID: String?
+    ) async throws -> AgentActionPreflightResponse {
+        var payload: [String: Any] = ["operation_id": operationID]
+        if let boardID, !boardID.isEmpty {
+            payload["board_id"] = boardID
+        }
+        if let variantID, !variantID.isEmpty {
+            payload["variant_id"] = variantID
+        }
+
+        var request = URLRequest(url: localAgentURL(path: "v1/actions/precheck"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 2
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw ToolkitGUIError.commandFailed("本地 DBT Agent 动作预检失败")
+        }
+        localAgentRunning = true
+        return try JSONDecoder().decode(AgentActionPreflightResponse.self, from: data)
     }
 
     func fetchLocalAgentTask(_ taskID: String) async throws -> ToolkitTask {
@@ -3053,39 +3103,29 @@ final class ToolkitViewModel: ObservableObject {
             return nil
 
         case .ensureUSBNet:
-            refreshStatus(silent: true)
-            guard status?.usb?.mode == "usb-ecm" else {
-                return "当前未检测到 USB ECM 连接，无法恢复主机静态地址。"
-            }
-            return nil
+            return await localAgentOperationPreflightMessage(operationID: "usb_ecm", boardID: route.boardID, variantID: route.variantID)
 
         case .authorizeKey, .rebootLoader:
-            return await boardOperationPreflightMessage(operationID: "usb_control", boardID: route.boardID, variantID: route.variantID)
+            return await localAgentOperationPreflightMessage(operationID: "usb_control", boardID: route.boardID, variantID: route.variantID)
 
         case .rebootDevice:
-            return await boardOperationPreflightMessage(operationID: "usb_or_ssh", boardID: route.boardID, variantID: route.variantID)
+            return await localAgentOperationPreflightMessage(operationID: "usb_or_ssh", boardID: route.boardID, variantID: route.variantID)
 
         case .flash:
-            return await boardOperationPreflightMessage(operationID: "flash_transport", boardID: route.boardID, variantID: route.variantID)
+            return await localAgentOperationPreflightMessage(operationID: "flash_transport", boardID: route.boardID, variantID: route.variantID)
 
         case .buildSync:
-            refreshStatus(silent: true)
-            guard status?.host?.docker_daemon == true else {
-                return "Docker 未就绪，无法执行构建同步。"
-            }
-            return nil
+            return await localAgentOperationPreflightMessage(operationID: "docker_ready", boardID: route.boardID, variantID: route.variantID)
 
         case .buildSyncFlash:
-            refreshStatus(silent: true)
-            guard status?.host?.docker_daemon == true else {
-                return "Docker 未就绪，无法执行构建同步刷写。"
+            if let message = await localAgentOperationPreflightMessage(operationID: "docker_ready", boardID: route.boardID, variantID: route.variantID) {
+                return message
             }
-            return await boardOperationPreflightMessage(operationID: "flash_transport", boardID: route.boardID, variantID: route.variantID)
+            return await localAgentOperationPreflightMessage(operationID: "flash_transport", boardID: route.boardID, variantID: route.variantID)
 
         case let .updateLogo(flashAfter):
-            refreshStatus(silent: true)
-            guard status?.host?.docker_daemon == true else {
-                return "Docker 未就绪，无法更新启动 Logo。"
+            if let message = await localAgentOperationPreflightMessage(operationID: "docker_ready", boardID: route.boardID, variantID: route.variantID) {
+                return message
             }
             guard !logoPath.isEmpty, FileManager.default.fileExists(atPath: logoPath) else {
                 return "请选择存在的启动 Logo 文件。"
@@ -3099,9 +3139,8 @@ final class ToolkitViewModel: ObservableObject {
             return nil
 
         case let .updateDTB(flashAfter):
-            refreshStatus(silent: true)
-            guard status?.host?.docker_daemon == true else {
-                return "Docker 未就绪，无法更新设备树。"
+            if let message = await localAgentOperationPreflightMessage(operationID: "docker_ready", boardID: route.boardID, variantID: route.variantID) {
+                return message
             }
             guard !dtsFilePath.isEmpty, FileManager.default.fileExists(atPath: dtsFilePath) else {
                 return "请选择存在的设备树文件。"
@@ -3381,6 +3420,52 @@ final class ToolkitViewModel: ObservableObject {
         inlineErrorMessage = ""
         lastError = ""
         footerFlashOn = false
+    }
+
+    func copyDeviceIPAddress() {
+        guard let boardIP = status?.usbnet?.board_ip, !boardIP.isEmpty, boardIP != "-" else {
+            appendActivity(level: .warning, title: "设备 IP", message: "当前没有可复制的设备地址")
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(boardIP, forType: .string)
+        appendActivity(level: .success, title: "设备 IP", message: "IP 地址已复制", detail: boardIP)
+    }
+
+    func promptOpenSSHTerminal() {
+        guard status?.board?.ssh_port_open == true else {
+            appendActivity(level: .warning, title: "SSH", message: "当前 SSH 尚未恢复")
+            return
+        }
+        let boardIP = status?.usbnet?.board_ip ?? "198.19.77.1"
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "打开终端连接"
+        alert.informativeText = "将通过 Terminal 执行 ssh root@\(boardIP)"
+        alert.addButton(withTitle: "打开")
+        alert.addButton(withTitle: "取消")
+        if alert.runModal() == .alertFirstButtonReturn {
+            openSSHTerminal(boardIP: boardIP)
+        }
+    }
+
+    private func openSSHTerminal(boardIP: String) {
+        let script = """
+        tell application "Terminal"
+            activate
+            do script "ssh root@\(boardIP)"
+        end tell
+        """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        do {
+            try process.run()
+            appendActivity(level: .success, title: "SSH", message: "已打开终端连接", detail: "ssh root@\(boardIP)")
+        } catch {
+            presentInlineError("打开终端失败: \(error.localizedDescription)")
+            appendActivity(level: .error, title: "SSH", message: "打开终端失败", detail: error.localizedDescription)
+        }
     }
 
     func dismissCurrentTaskOverlay() {
@@ -4743,6 +4828,15 @@ final class ToolkitViewModel: ObservableObject {
         )
     }
 
+    func performToolkitUpdate() {
+        if toolkitUpdateStatus.updateAvailable {
+            shouldRelaunchAfterToolkitUpdate = true
+            installToolkitUpdate()
+        } else {
+            checkToolkitUpdate()
+        }
+    }
+
     func updateInitialImages() {
         updaterLastDetail = "准备下载并更新初始镜像..."
         runManagedAction(
@@ -5670,30 +5764,105 @@ struct StatusCard: View {
     let title: String
     let value: String
     let ok: Bool
+    let symbol: String
+    let helpText: String?
+    let onTap: (() -> Void)?
+    let tapFeedback: String?
+    @State private var hovering = false
+    @State private var showTapFeedback = false
 
-    var body: some View {
+    init(
+        title: String,
+        value: String,
+        ok: Bool,
+        symbol: String = "circle.grid.2x2.fill",
+        helpText: String? = nil,
+        onTap: (() -> Void)? = nil,
+        tapFeedback: String? = nil
+    ) {
+        self.title = title
+        self.value = value
+        self.ok = ok
+        self.symbol = symbol
+        self.helpText = helpText
+        self.onTap = onTap
+        self.tapFeedback = tapFeedback
+    }
+
+    private var statusTint: Color {
+        ok ? .green : .orange
+    }
+
+    @ViewBuilder
+    private var trailingIndicator: some View {
+        if showTapFeedback, let tapFeedback {
+            Text(tapFeedback)
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .foregroundStyle(Color.accentColor)
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+        } else {
+            Circle()
+                .fill(statusTint)
+                .frame(width: 7, height: 7)
+        }
+    }
+
+    @ViewBuilder
+    private var cardLabel: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Circle()
-                    .fill(ok ? Color.green : Color.orange)
-                    .frame(width: 7, height: 7)
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(statusTint)
                 Text(title)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                Spacer(minLength: 4)
+                trailingIndicator
             }
             Text(value)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
                 .truncationMode(.tail)
-                .textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    var body: some View {
+        Button {
+            guard let onTap else { return }
+            onTap()
+            if tapFeedback != nil {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    showTapFeedback = true
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        showTapFeedback = false
+                    }
+                }
+            }
+        } label: {
+            cardLabel
+            .background(hovering ? Color.accentColor.opacity(0.08) : Color(nsColor: .controlBackgroundColor))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(hovering && onTap != nil ? Color.accentColor.opacity(0.22) : Color.clear, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .scaleEffect(hovering && onTap != nil ? 1.01 : 1.0)
+            .animation(.easeOut(duration: 0.16), value: hovering)
+        }
+        .buttonStyle(.plain)
+        .disabled(onTap == nil)
+        .help(helpText ?? value)
+        .onHover { inside in
+            hovering = inside
+        }
     }
 }
 
@@ -5703,16 +5872,47 @@ struct ActionTile: View {
     let enabled: Bool
     let disabledReason: String?
     let action: () -> Void
+    let symbol: String
     var compact: Bool = false
     @State private var hovering = false
+
+    init(
+        title: String,
+        subtitle: String,
+        enabled: Bool,
+        disabledReason: String? = nil,
+        symbol: String = "bolt.circle.fill",
+        action: @escaping () -> Void,
+        compact: Bool = false
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.enabled = enabled
+        self.disabledReason = disabledReason
+        self.symbol = symbol
+        self.action = action
+        self.compact = compact
+    }
 
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: compact ? 4 : 8) {
-                Text(title)
-                    .font((compact ? Font.system(size: 12, weight: .semibold) : .subheadline.weight(.semibold)))
-                    .lineLimit(1)
-                    .foregroundStyle(enabled ? Color.primary : Color.secondary)
+                HStack(spacing: 8) {
+                    Image(systemName: symbol)
+                        .font(.system(size: compact ? 12 : 14, weight: .semibold))
+                        .foregroundStyle(enabled ? Color.accentColor : Color.secondary)
+                    Text(title)
+                        .font((compact ? Font.system(size: 12, weight: .semibold) : .subheadline.weight(.semibold)))
+                        .lineLimit(1)
+                        .foregroundStyle(enabled ? Color.primary : Color.secondary)
+                    Spacer(minLength: 0)
+                    if hovering && enabled {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.accentColor)
+                            .transition(.opacity)
+                    }
+                }
                 if !compact {
                     Text(subtitle)
                         .font(.caption)
@@ -5737,6 +5937,8 @@ struct ActionTile: View {
                     .stroke(borderColor, lineWidth: 1)
             )
             .opacity(enabled ? 1 : 0.72)
+            .scaleEffect(hovering && enabled ? 1.015 : 1.0)
+            .animation(.easeOut(duration: 0.16), value: hovering)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
@@ -5833,22 +6035,37 @@ struct OverviewTab: View {
             }
 
             LazyVGrid(columns: statusColumns, spacing: 6) {
-                StatusCard(title: "USB 模式", value: vm.status?.usb?.mode ?? "-", ok: (vm.status?.usb?.mode ?? "") != "absent")
-                StatusCard(title: "USB 设备", value: vm.status?.usb?.product ?? "-", ok: true)
-                StatusCard(title: "主机网口", value: vm.status?.usbnet?.iface ?? "-", ok: vm.status?.usbnet?.configured == true)
-                StatusCard(title: "设备 IP", value: vm.status?.usbnet?.board_ip ?? "-", ok: vm.status?.usbnet?.configured == true)
-                StatusCard(title: "板卡 Ping", value: vm.status?.board?.ping == true ? "在线" : "离线", ok: vm.status?.board?.ping == true)
-                StatusCard(title: "SSH", value: vm.status?.board?.ssh_port_open == true ? "可连接" : "未连接", ok: vm.status?.board?.ssh_port_open == true)
-                StatusCard(title: "控制服务", value: vm.status?.board?.control_service == true ? "正常" : "未响应", ok: vm.status?.board?.control_service == true)
-                StatusCard(title: "Docker", value: vm.status?.host?.docker_daemon == true ? "已就绪" : "未启动", ok: vm.status?.host?.docker_daemon == true)
+                StatusCard(title: "USB 模式", value: vm.status?.usb?.mode ?? "-", ok: (vm.status?.usb?.mode ?? "") != "absent", symbol: "cable.connector")
+                StatusCard(title: "USB 设备", value: vm.status?.usb?.product ?? "-", ok: true, symbol: "externaldrive")
+                StatusCard(title: "主机网口", value: vm.status?.usbnet?.iface ?? "-", ok: vm.status?.usbnet?.configured == true, symbol: "network")
+                StatusCard(
+                    title: "设备 IP",
+                    value: vm.status?.usbnet?.board_ip ?? "-",
+                    ok: vm.status?.usbnet?.configured == true,
+                    symbol: "point.3.connected.trianglepath.dotted",
+                    helpText: "点击复制开发板 IP 地址",
+                    onTap: vm.status?.usbnet?.configured == true ? { vm.copyDeviceIPAddress() } : nil,
+                    tapFeedback: "已复制"
+                )
+                StatusCard(title: "板卡 Ping", value: vm.status?.board?.ping == true ? "在线" : "离线", ok: vm.status?.board?.ping == true, symbol: "dot.radiowaves.left.and.right")
+                StatusCard(
+                    title: "SSH",
+                    value: vm.status?.board?.ssh_port_open == true ? "可连接" : "未连接",
+                    ok: vm.status?.board?.ssh_port_open == true,
+                    symbol: "terminal",
+                    helpText: vm.status?.board?.ssh_port_open == true ? "点击打开终端连接" : "当前 SSH 尚未恢复",
+                    onTap: vm.status?.board?.ssh_port_open == true ? { vm.promptOpenSSHTerminal() } : nil
+                )
+                StatusCard(title: "控制服务", value: vm.status?.board?.control_service == true ? "正常" : "未响应", ok: vm.status?.board?.control_service == true, symbol: "switch.2")
+                StatusCard(title: "Docker", value: vm.status?.host?.docker_daemon == true ? "已就绪" : "未启动", ok: vm.status?.host?.docker_daemon == true, symbol: "shippingbox")
             }
 
             GroupBox("连接与准备") {
                 LazyVGrid(columns: actionColumns, spacing: 8) {
-                    ActionTile(title: "主机预检", subtitle: "检查 Docker、镜像和刷机工具状态", enabled: checkHostState.enabled, disabledReason: checkHostState.reason) { vm.checkHost() }
-                    ActionTile(title: "恢复 USB 网络", subtitle: "修复 USB ECM 重枚举后的主机静态 IP", enabled: ensureUSBNetState.enabled, disabledReason: ensureUSBNetState.reason) { vm.ensureUSBNet() }
-                    ActionTile(title: "授权 SSH", subtitle: "把当前电脑公钥写入开发板", enabled: authorizeKeyState.enabled, disabledReason: authorizeKeyState.reason) { vm.authorizeKey() }
-                    ActionTile(title: "切换 Loader", subtitle: "通过 usb0 控制服务让开发板进入 Loader", enabled: rebootLoaderState.enabled, disabledReason: rebootLoaderState.reason) { vm.rebootLoader() }
+                    ActionTile(title: "主机预检", subtitle: "检查 Docker、镜像和刷机工具状态", enabled: checkHostState.enabled, disabledReason: checkHostState.reason, symbol: "stethoscope") { vm.checkHost() }
+                    ActionTile(title: "恢复 USB 网络", subtitle: "修复 USB ECM 重枚举后的主机静态 IP", enabled: ensureUSBNetState.enabled, disabledReason: ensureUSBNetState.reason, symbol: "point.3.filled.connected.trianglepath.dotted") { vm.ensureUSBNet() }
+                    ActionTile(title: "授权 SSH", subtitle: "把当前电脑公钥写入开发板", enabled: authorizeKeyState.enabled, disabledReason: authorizeKeyState.reason, symbol: "key.horizontal") { vm.authorizeKey() }
+                    ActionTile(title: "切换 Loader", subtitle: "通过 usb0 控制服务让开发板进入 Loader", enabled: rebootLoaderState.enabled, disabledReason: rebootLoaderState.reason, symbol: "arrow.trianglehead.2.clockwise.rotate.90") { vm.rebootLoader() }
                 }
                 .padding(.top, 8)
             }
@@ -5920,6 +6137,7 @@ struct FlashTab: View {
                         subtitle: "按 parameter 刷写全部分区",
                         enabled: flashAllState.enabled,
                         disabledReason: flashAllState.reason,
+                        symbol: "externaldrive.badge.timemachine",
                         action: { vm.flash("all", source: source) },
                         compact: true
                     )
@@ -5928,6 +6146,7 @@ struct FlashTab: View {
                         subtitle: "仅刷 boot",
                         enabled: flashBootState.enabled,
                         disabledReason: flashBootState.reason,
+                        symbol: "power.circle",
                         action: { vm.flash("boot", source: source) },
                         compact: true
                     )
@@ -5936,6 +6155,7 @@ struct FlashTab: View {
                         subtitle: "仅刷 rootfs",
                         enabled: flashRootfsState.enabled,
                         disabledReason: flashRootfsState.reason,
+                        symbol: "internaldrive",
                         action: { vm.flash("rootfs", source: source) },
                         compact: true
                     )
@@ -5944,6 +6164,7 @@ struct FlashTab: View {
                         subtitle: "仅刷 userdata",
                         enabled: flashUserdataState.enabled,
                         disabledReason: flashUserdataState.reason,
+                        symbol: "externaldrive.fill.badge.person.crop",
                         action: { vm.flash("userdata", source: source) },
                         compact: true
                     )
@@ -6464,15 +6685,12 @@ struct ToolkitInfoSectionData: Identifiable {
 
 enum ToolkitInfoPage {
     case version(appVersion: String, buildVersion: String)
-    case features
     case contact
 
     var windowTitle: String {
         switch self {
         case .version:
             return "版本信息"
-        case .features:
-            return "功能说明"
         case .contact:
             return "联系方式"
         }
@@ -6481,9 +6699,7 @@ enum ToolkitInfoPage {
     var preferredSize: NSSize {
         switch self {
         case .version:
-            return NSSize(width: 640, height: 620)
-        case .features:
-            return NSSize(width: 660, height: 720)
+            return NSSize(width: 560, height: 220)
         case .contact:
             return NSSize(width: 560, height: 560)
         }
@@ -6493,8 +6709,6 @@ enum ToolkitInfoPage {
         switch self {
         case .version:
             return Color(red: 0.05, green: 0.45, blue: 0.78)
-        case .features:
-            return Color(red: 0.06, green: 0.55, blue: 0.38)
         case .contact:
             return Color(red: 0.80, green: 0.42, blue: 0.10)
         }
@@ -6504,8 +6718,6 @@ enum ToolkitInfoPage {
         switch self {
         case .version:
             return "Development Board Toolchain"
-        case .features:
-            return "功能说明"
         case .contact:
             return "联系方式"
         }
@@ -6514,9 +6726,7 @@ enum ToolkitInfoPage {
     var heroSubtitle: String {
         switch self {
         case .version:
-            return "面向多种开发板的 macOS 常驻控制台，统一承载连接、刷写、发布与维护入口。"
-        case .features:
-            return "围绕开发板连接、刷写、发布和现场维护整理出的图形化能力入口。"
+            return "用于连接、刷写、发布与维护开发板的 macOS 常驻工具。"
         case .contact:
             return "用于问题反馈、功能建议和维护支持的统一入口。欢迎通过邮箱联系，也可以通过下方二维码支持后续迭代。"
         }
@@ -6526,8 +6736,6 @@ enum ToolkitInfoPage {
         switch self {
         case let .version(appVersion, buildVersion):
             return "v\(appVersion) · build \(buildVersion)"
-        case .features:
-            return "四类核心能力"
         case .contact:
             return "反馈与支持"
         }
@@ -6536,9 +6744,7 @@ enum ToolkitInfoPage {
     var footerText: String {
         switch self {
         case .version:
-            return "版本页用于查看当前安装包构建信息与工具覆盖范围。"
-        case .features:
-            return "功能页概览 GUI 已集成能力，具体执行入口仍在状态栏菜单和主面板中。"
+            return ""
         case .contact:
             return "感谢支持 Development Board Toolchain。你的反馈和捐献都会直接用于后续维护、适配和体验优化。"
         }
@@ -6555,162 +6761,8 @@ enum ToolkitInfoPage {
 
     var sections: [ToolkitInfoSectionData] {
         switch self {
-        case let .version(appVersion, buildVersion):
-            return [
-                ToolkitInfoSectionData(
-                    eyebrow: "当前构建",
-                    title: "版本与运行形态",
-                    summary: "当前安装包以状态栏应用运行，图形界面、本地控制服务和后台任务使用同一套执行链路。",
-                    rows: [
-                        ToolkitInfoRowData(
-                            symbol: "app.badge.fill",
-                            title: "应用版本",
-                            detail: "当前 GUI 版本为 v\(appVersion)，构建号为 \(buildVersion)，适用于 macOS 14 及以上环境。",
-                            tint: accentColor
-                        ),
-                        ToolkitInfoRowData(
-                            symbol: "server.rack",
-                            title: "控制服务 API",
-                            detail: "内置本地控制服务 API v2，GUI、CLI 和异步任务共用同一条命令执行与状态回传路径。",
-                            tint: Color.orange
-                        ),
-                        ToolkitInfoRowData(
-                            symbol: "menubar.rectangle",
-                            title: "工作方式",
-                            detail: "常驻状态栏运行，支持后台状态监测、任务跟踪、更新安装和操作回显。",
-                            tint: Color.purple
-                        ),
-                    ]
-                ),
-                ToolkitInfoSectionData(
-                    eyebrow: "工具定位",
-                    title: "覆盖场景",
-                    summary: "这一版 GUI 重点覆盖开发板在 macOS 下的连接管理、镜像刷写、开发联调和发布维护流程。",
-                    rows: [
-                        ToolkitInfoRowData(
-                            symbol: "cable.connector",
-                            title: "设备连接",
-                            detail: "统一查看 USB、USB ECM、SSH、控制服务和 Docker 状态，减少多窗口切换。",
-                            tint: Color.green
-                        ),
-                        ToolkitInfoRowData(
-                            symbol: "externaldrive.badge.checkmark",
-                            title: "刷写与恢复",
-                            detail: "支持整机刷写，也支持 Boot、Rootfs、Userdata 的分区级快速验证。",
-                            tint: Color.blue
-                        ),
-                        ToolkitInfoRowData(
-                            symbol: "slider.horizontal.3",
-                            title: "发布定制",
-                            detail: "支持启动 Logo、设备树、初始镜像资源与发布工作区管理。",
-                            tint: Color.pink
-                        ),
-                    ]
-                ),
-            ]
-        case .features:
-            return [
-                ToolkitInfoSectionData(
-                    eyebrow: "监控与连接",
-                    title: "统一状态总览",
-                    summary: "把主机侧和板卡侧的关键连接状态收敛到一个常驻面板里，便于快速判断当前能执行什么操作。",
-                    rows: [
-                        ToolkitInfoRowData(
-                            symbol: "dot.scope",
-                            title: "连接状态",
-                            detail: "实时展示 USB 模式、USB ECM 配置、开发板 Ping、SSH 端口和控制服务可达性。",
-                            tint: Color.green
-                        ),
-                        ToolkitInfoRowData(
-                            symbol: "shippingbox.circle",
-                            title: "主机环境",
-                            detail: "同时检查 Docker、共享镜像、rkflashtool 和发布资源是否准备完成。",
-                            tint: Color.orange
-                        ),
-                        ToolkitInfoRowData(
-                            symbol: "bell.badge",
-                            title: "状态提醒",
-                            detail: "连接变化、任务完成和异常情况会以界面提示或系统通知方式反馈。",
-                            tint: Color.blue
-                        ),
-                    ]
-                ),
-                ToolkitInfoSectionData(
-                    eyebrow: "刷写与定制",
-                    title: "面向验证流程的快速操作",
-                    summary: "针对开发和现场恢复最常见的动作做了图形化封装，降低命令行切换成本。",
-                    rows: [
-                        ToolkitInfoRowData(
-                            symbol: "arrow.trianglehead.2.clockwise.rotate.90",
-                            title: "整机与分区刷写",
-                            detail: "支持按 parameter.txt 整机刷写，也支持 Boot、Rootfs、Userdata 的单独下发。",
-                            tint: Color.red
-                        ),
-                        ToolkitInfoRowData(
-                            symbol: "photo",
-                            title: "启动 Logo 更新",
-                            detail: "支持指定图片、旋转角度和显示比例，并可在更新后直接刷 Boot 分区。",
-                            tint: Color.pink
-                        ),
-                        ToolkitInfoRowData(
-                            symbol: "cpu",
-                            title: "设备树更新",
-                            detail: "支持选择 DTS 文件或目录进行增量更新，并联动 Boot 刷写验证。",
-                            tint: Color.indigo
-                        ),
-                    ]
-                ),
-                ToolkitInfoSectionData(
-                    eyebrow: "开发与发布",
-                    title: "覆盖日常联调到交付准备",
-                    summary: "把开发版构建同步、发布资源准备和插件安装收拢到 GUI 内，减少外部脚本依赖。",
-                    rows: [
-                        ToolkitInfoRowData(
-                            symbol: "hammer",
-                            title: "开发版流程",
-                            detail: "支持 build and sync、build-sync-flash 等高频联调动作，适合快速验证迭代。",
-                            tint: Color.orange
-                        ),
-                        ToolkitInfoRowData(
-                            symbol: "shippingbox.fill",
-                            title: "发布环境安装",
-                            detail: "支持共享镜像、发布工作区、初始镜像和辅助插件的准备与检查。",
-                            tint: Color.green
-                        ),
-                        ToolkitInfoRowData(
-                            symbol: "arrow.down.circle",
-                            title: "软件与镜像更新",
-                            detail: "支持软件更新检查、GUI 安装包替换和初始镜像资源同步。",
-                            tint: Color.blue
-                        ),
-                    ]
-                ),
-                ToolkitInfoSectionData(
-                    eyebrow: "后台能力",
-                    title: "围绕稳定执行做的辅助机制",
-                    summary: "GUI 不只是操作入口，还负责在后台维护本地服务、任务轮询和异常恢复。",
-                    rows: [
-                        ToolkitInfoRowData(
-                            symbol: "clock.arrow.circlepath",
-                            title: "异步任务跟踪",
-                            detail: "长任务通过本地服务异步执行，窗口中持续展示进度、日志和完成状态。",
-                            tint: Color.teal
-                        ),
-                        ToolkitInfoRowData(
-                            symbol: "arrow.triangle.2.circlepath",
-                            title: "自动更新联动",
-                            detail: "更新完成后会自动切换到新安装包，并重新拉起应用实例。",
-                            tint: Color.purple
-                        ),
-                        ToolkitInfoRowData(
-                            symbol: "wrench.and.screwdriver",
-                            title: "故障恢复",
-                            detail: "遇到旧版本地服务或状态流异常时，会自动重启服务并恢复监控链路。",
-                            tint: Color.gray
-                        ),
-                    ]
-                ),
-            ]
+        case .version:
+            return []
         case .contact:
             return [
                 ToolkitInfoSectionData(
@@ -6787,6 +6839,7 @@ struct ToolkitInfoHeroCard: View {
 
     var body: some View {
         HStack(spacing: 18) {
+            ToolkitInfoLogoView(size: 92, cornerRadius: 20)
             VStack(alignment: .leading, spacing: 10) {
                 Text(page.windowTitle)
                     .font(.system(.caption, design: .rounded).weight(.bold))
@@ -6807,7 +6860,6 @@ struct ToolkitInfoHeroCard: View {
                     .clipShape(Capsule())
             }
             Spacer(minLength: 0)
-            ToolkitInfoLogoView()
         }
         .padding(22)
         .background(
@@ -7139,6 +7191,11 @@ struct ToolkitInfoWindowView: View {
         Group {
             if case .contact = page {
                 ToolkitContactWindowView(page: page)
+            } else if case .version = page {
+                VStack(alignment: .leading, spacing: 0) {
+                    ToolkitInfoHeroCard(page: page)
+                }
+                .padding(24)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
@@ -7525,38 +7582,77 @@ struct ToolkitUpdateWindowView: View {
         if !vm.updateConfigured {
             return "未配置远程更新地址"
         }
+        if vm.toolkitUpdateStatus.updateAvailable {
+            return "发现新版本 \(vm.toolkitUpdateStatus.remoteVersion)"
+        }
         if !vm.toolkitUpdateStatus.remoteVersion.isEmpty {
-            return "当前版本 \(vm.toolkitUpdateStatus.currentVersion)，已经是最新版本"
+            return "当前版本 \(vm.toolkitUpdateStatus.currentVersion)，已是最新版本"
         }
         return "等待检查更新"
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Development Board Toolchain 软件更新")
+                    .font(.headline)
+                HStack(spacing: 16) {
+                    Label("当前版本 \(vm.toolkitUpdateStatus.currentVersion)", systemImage: "app.badge")
+                        .foregroundStyle(.secondary)
+                    if !vm.toolkitUpdateStatus.remoteVersion.isEmpty {
+                        Label("远端版本 \(vm.toolkitUpdateStatus.remoteVersion)", systemImage: "icloud.and.arrow.down")
+                            .foregroundStyle(vm.toolkitUpdateStatus.updateAvailable ? Color.accentColor : .secondary)
+                    }
+                }
+                Text(displayText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if let progress = vm.taskProgressValue(for: vm.currentTask), updateFlowRunning {
                 ProgressView(value: progress)
                     .progressViewStyle(.linear)
-                    .frame(width: 320)
             } else if updateFlowRunning {
                 ProgressView()
                     .progressViewStyle(.linear)
-                    .frame(width: 320)
             }
 
-            Text(displayText)
-                .font(.subheadline)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
+            HStack(spacing: 10) {
+                Button("检查更新") {
+                    vm.checkToolkitUpdate()
+                }
+                .buttonStyle(.bordered)
+                .disabled(updateFlowRunning)
 
-            Spacer(minLength: 0)
+                Button("安装更新") {
+                    vm.performToolkitUpdate()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(updateFlowRunning || !vm.toolkitUpdateStatus.updateAvailable)
+
+                Spacer()
+            }
+
+            if !logLines.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(logLines.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(10)
+                .background(Color.primary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .frame(minWidth: 420, minHeight: 150)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 18)
+        .frame(minWidth: 460, minHeight: 210)
         .task {
-            vm.startAutomaticToolkitUpdateFlow()
+            vm.checkToolkitUpdate()
         }
     }
 }
@@ -9950,7 +10046,6 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private let statusIndicatorView = NSView(frame: NSRect(x: 0, y: 0, width: 8, height: 8))
     private var boardModelWindowController: NSWindowController?
     private var versionInfoWindowController: NSWindowController?
-    private var featureInfoWindowController: NSWindowController?
     private var contactInfoWindowController: NSWindowController?
     private var developmentInstallWindowController: NSWindowController?
     private var developmentInstallWindowCloseGuard: WindowCloseGuard?
@@ -9995,10 +10090,6 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         let versionItem = NSMenuItem(title: "版本信息", action: #selector(showVersionInfo), keyEquivalent: "")
         versionItem.target = self
         contextMenu.addItem(versionItem)
-
-        let featureItem = NSMenuItem(title: "功能说明", action: #selector(showFeatureInfo), keyEquivalent: "")
-        featureItem.target = self
-        contextMenu.addItem(featureItem)
 
         let contactItem = NSMenuItem(title: "联系方式", action: #selector(showContactInfo), keyEquivalent: "")
         contactItem.target = self
@@ -10197,7 +10288,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         button.imageScaling = .scaleProportionallyUpOrDown
         button.contentTintColor = nil
         button.title = ""
-        button.toolTip = vm.statusHeadline
+        button.toolTip = vm.productDisplayName
         updateStatusIndicatorAppearance()
     }
 
@@ -10349,8 +10440,6 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             switch page {
             case .version:
                 return versionInfoWindowController
-            case .features:
-                return featureInfoWindowController
             case .contact:
                 return contactInfoWindowController
             }
@@ -10379,8 +10468,6 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         switch page {
         case .version:
             versionInfoWindowController = controller
-        case .features:
-            featureInfoWindowController = controller
         case .contact:
             contactInfoWindowController = controller
         }
@@ -10400,8 +10487,6 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
                 switch page {
                 case .version:
                     self.versionInfoWindowController = nil
-                case .features:
-                    self.featureInfoWindowController = nil
                 case .contact:
                     self.contactInfoWindowController = nil
                 }
@@ -10413,10 +10498,6 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
         let buildVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
         presentInfoWindow(page: .version(appVersion: shortVersion, buildVersion: buildVersion))
-    }
-
-    @objc private func showFeatureInfo() {
-        presentInfoWindow(page: .features)
     }
 
     @objc private func showContactInfo() {
@@ -10485,7 +10566,12 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             controller.showWindow(nil)
             controller.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-            vm.startAutomaticToolkitUpdateFlow()
+            if vm.updateConfigured,
+               !vm.automaticToolkitUpdateInProgress,
+               vm.toolkitUpdateStatus.remoteVersion.isEmpty
+            {
+                vm.checkToolkitUpdate()
+            }
             return
         }
 
@@ -10505,7 +10591,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         controller.showWindow(nil)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        vm.startAutomaticToolkitUpdateFlow()
+        if vm.updateConfigured && !vm.automaticToolkitUpdateInProgress {
+            vm.checkToolkitUpdate()
+        }
 
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
