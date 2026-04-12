@@ -1,0 +1,51 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version override
+        required: false
+        type: string
+
+jobs:
+  gui-release:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare scripts
+        run: chmod +x mac_app/swift-cli/build_swift_cli.sh mac_app/gui/build_gui_app.sh scripts/package_gui_release.sh
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="$(tr -d '\n' < VERSION)"
+          fi
+          echo "value=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build release package
+        env:
+          APP_VERSION_OVERRIDE: ${{ steps.version.outputs.value }}
+          DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+        run: ./scripts/package_gui_release.sh
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/gui_app/DBT-Agent-*.zip
+            dist/gui_app/manifest.json
+            dist/gui_app/toolkit-manifest.json

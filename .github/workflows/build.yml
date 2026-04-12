@@ -1,0 +1,27 @@
+name: build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gui-build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare scripts
+        run: chmod +x mac_app/swift-cli/build_swift_cli.sh mac_app/gui/build_gui_app.sh scripts/package_gui_release.sh
+
+      - name: Build release package
+        run: ./scripts/package_gui_release.sh
+
+      - name: Upload GUI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-app
+          path: dist/gui_app/*
+
