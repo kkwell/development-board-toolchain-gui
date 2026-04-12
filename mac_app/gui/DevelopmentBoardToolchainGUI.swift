@@ -6113,6 +6113,59 @@ struct ReleaseStateCard: View {
 
     var tint: Color { ok ? .green : .secondary }
 
+    var actionForeground: Color {
+        if actionEmphasized {
+            return actionSoft ? .accentColor : .white
+        }
+        return .accentColor
+    }
+
+    var actionFillColor: Color {
+        if !actionEnabled {
+            return Color.secondary.opacity(0.12)
+        }
+        return actionSoft ? Color.accentColor.opacity(0.12) : Color.accentColor
+    }
+
+    var actionStrokeColor: Color {
+        if !actionEnabled {
+            return Color.secondary.opacity(0.12)
+        }
+        return actionSoft ? Color.accentColor.opacity(0.18) : Color.accentColor.opacity(0.2)
+    }
+
+    var actionShadowColor: Color {
+        actionEnabled && !actionSoft ? Color.black.opacity(0.18) : .clear
+    }
+
+    @ViewBuilder
+    private var actionBackground: some View {
+        if actionEmphasized {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(actionFillColor)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(actionStrokeColor, lineWidth: 1)
+                )
+                .shadow(color: actionShadowColor, radius: 6, x: 0, y: 3)
+        }
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        if let actionTitle, let action {
+            Button(actionTitle, action: action)
+                .buttonStyle(.plain)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, actionEmphasized ? 12 : 0)
+                .padding(.vertical, actionEmphasized ? 7 : 0)
+                .background(actionBackground)
+                .foregroundStyle(actionForeground)
+                .opacity(actionEnabled ? 1 : 0.6)
+                .disabled(!actionEnabled)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -6123,43 +6176,7 @@ struct ReleaseStateCard: View {
                         .font(.subheadline.weight(.semibold))
                 }
                 Spacer()
-                if let actionTitle, let action {
-                    Button(actionTitle, action: action)
-                        .buttonStyle(.plain)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, actionEmphasized ? 12 : 0)
-                        .padding(.vertical, actionEmphasized ? 7 : 0)
-                        .background(
-                            Group {
-                                if actionEmphasized {
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(
-                                            actionEnabled
-                                                ? (actionSoft ? Color.accentColor.opacity(0.12) : Color.accentColor)
-                                                : Color.secondary.opacity(0.12)
-                                        )
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                                .stroke(
-                                                    actionEnabled
-                                                        ? (actionSoft ? Color.accentColor.opacity(0.18) : Color.accentColor.opacity(0.2))
-                                                        : Color.secondary.opacity(0.12),
-                                                    lineWidth: 1
-                                                )
-                                        )
-                                        .shadow(
-                                            color: actionEnabled && !actionSoft ? Color.black.opacity(0.18) : .clear,
-                                            radius: 6,
-                                            x: 0,
-                                            y: 3
-                                        )
-                                }
-                            }
-                        )
-                        .foregroundStyle(actionEmphasized ? (actionSoft ? Color.accentColor : Color.white) : Color.accentColor)
-                        .opacity(actionEnabled ? 1 : 0.6)
-                        .disabled(!actionEnabled)
-                }
+                actionButton
             }
             Text(detail)
                 .font(.caption2)
