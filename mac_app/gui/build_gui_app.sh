@@ -29,6 +29,17 @@ rm -f "${BUILD_DIR}/DBT-"*.zip
 
 build_icon() {
   if [[ ! -f "${ICON_SOURCE}" ]]; then
+    echo "Icon source not found at ${ICON_SOURCE}; skipping icon build"
+    return 0
+  fi
+
+  if ! command -v sips >/dev/null 2>&1; then
+    echo "sips not available; skipping icon build"
+    return 0
+  fi
+
+  if ! command -v iconutil >/dev/null 2>&1; then
+    echo "iconutil not available; skipping icon build"
     return 0
   fi
 
@@ -36,15 +47,22 @@ build_icon() {
   mkdir -p "${ICONSET_DIR}"
 
   local width height edge
-  width="$(sips -g pixelWidth "${ICON_SOURCE}" | awk '/pixelWidth:/ {print $2}')"
-  height="$(sips -g pixelHeight "${ICON_SOURCE}" | awk '/pixelHeight:/ {print $2}')"
+  width="$(sips -g pixelWidth "${ICON_SOURCE}" 2>/dev/null | awk '/pixelWidth:/ {print $2}')"
+  height="$(sips -g pixelHeight "${ICON_SOURCE}" 2>/dev/null | awk '/pixelHeight:/ {print $2}')"
+  if [[ -z "${width}" || -z "${height}" ]]; then
+    echo "Unable to inspect icon source dimensions; skipping icon build"
+    return 0
+  fi
   edge="${width}"
   if (( height > edge )); then
     edge="${height}"
   fi
 
   cp -f "${ICON_SOURCE}" "${ICON_MASTER}"
-  sips --padColor F3F0E8 --padToHeightWidth "${edge}" "${edge}" "${ICON_MASTER}" >/dev/null
+  if ! sips --padColor F3F0E8 --padToHeightWidth "${edge}" "${edge}" "${ICON_MASTER}" >/dev/null 2>&1; then
+    echo "Failed to pad icon master image; skipping icon build"
+    return 0
+  fi
 
   local entries=(
     "16:icon_16x16.png"
@@ -63,17 +81,26 @@ build_icon() {
   for entry in "${entries[@]}"; do
     size="${entry%%:*}"
     name="${entry#*:}"
-    sips -z "${size}" "${size}" "${ICON_MASTER}" --out "${ICONSET_DIR}/${name}" >/dev/null
+    if ! sips -z "${size}" "${size}" "${ICON_MASTER}" --out "${ICONSET_DIR}/${name}" >/dev/null 2>&1; then
+      echo "Failed to generate icon size ${size}; skipping icon build"
+      return 0
+    fi
   done
 
-  iconutil -c icns "${ICONSET_DIR}" -o "${RES_DIR}/AppIcon.icns"
+  if ! iconutil -c icns "${ICONSET_DIR}" -o "${RES_DIR}/AppIcon.icns" >/dev/null 2>&1; then
+    echo "iconutil failed; skipping icon build"
+    return 0
+  fi
 }
 
+echo "Building ${APP_NAME} ${APP_VERSION} in ${BUILD_DIR}"
 rm -rf "${APP_DIR}"
 mkdir -p "${BIN_DIR}" "${RES_DIR}"
 
+echo "Building shared CLI"
 "${REPO_ROOT}/mac_app/swift-cli/build_swift_cli.sh"
 
+echo "Compiling GUI executable"
 swiftc \
   -parse-as-library \
   -framework SwiftUI \
@@ -84,6 +111,7 @@ swiftc \
   "${SCRIPT_DIR}/DevelopmentBoardToolchainGUI.swift" \
   -o "${BIN_PATH}"
 
+echo "Writing Info.plist"
 cat >"${APP_DIR}/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -119,20 +147,25 @@ cat >"${APP_DIR}/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
+echo "Building app icon"
 build_icon
 
 if [[ -f "${INFO_LOGO_SOURCE}" ]]; then
+  echo "Copying info logo"
   cp -f "${INFO_LOGO_SOURCE}" "${RES_DIR}/AppInfoLogo.png"
 fi
 
 if [[ -f "${ALIPAY_QR_SOURCE}" ]]; then
+  echo "Copying Alipay QR"
   cp -f "${ALIPAY_QR_SOURCE}" "${RES_DIR}/ContactAlipay.jpg"
 fi
 
 if [[ -f "${WECHAT_QR_SOURCE}" ]]; then
+  echo "Copying WeChat QR"
   cp -f "${WECHAT_QR_SOURCE}" "${RES_DIR}/ContactWeChat.jpg"
 fi
 
+echo "Packaging app archive"
 rm -f "${APP_ARCHIVE}"
 (cd "${BUILD_DIR}" && ditto -c -k --sequesterRsrc --keepParent "${APP_NAME}.app" "$(basename "${APP_ARCHIVE}")")
 
