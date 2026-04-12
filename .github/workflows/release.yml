@@ -50,6 +50,15 @@ jobs:
           set -o pipefail
           ./scripts/package_gui_release.sh 2>&1 | tee build-package.log
 
+      - name: Print build log
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f build-package.log ]]; then
+            echo "===== build-package.log ====="
+            cat build-package.log
+          fi
+
       - name: Publish GitHub release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
