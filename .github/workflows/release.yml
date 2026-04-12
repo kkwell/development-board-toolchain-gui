@@ -45,7 +45,10 @@ jobs:
         env:
           APP_VERSION_OVERRIDE: ${{ steps.version.outputs.value }}
           DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
-        run: ./scripts/package_gui_release.sh
+        shell: bash
+        run: |
+          set -o pipefail
+          ./scripts/package_gui_release.sh 2>&1 | tee build-package.log
 
       - name: Publish GitHub release
         if: github.ref_type == 'tag'
@@ -55,3 +58,13 @@ jobs:
             dist/gui_app/DBT-Agent-*.zip
             dist/gui_app/manifest.json
             dist/gui_app/toolkit-manifest.json
+
+      - name: Upload release diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-release-diagnostics
+          path: |
+            build-package.log
+            mac_app/gui/build
+            dist/gui_app
