@@ -4,6 +4,12 @@ Open-source macOS GUI project for `DBT-Agent`.
 
 This repository contains the menu bar application source, the supporting Swift CLI sources it validates against during build, and GitHub Actions for build and release packaging.
 
+## Demo
+
+Click the preview below to open the original WebM recording.
+
+[![DBT-Agent GUI demo](assets/demo/gui_demo.gif)](assets/demo/gui_demo.webm)
+
 ## Scope
 
 - GUI app bundle name: `DBT-Agent.app`
