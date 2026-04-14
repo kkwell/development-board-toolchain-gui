@@ -49,6 +49,8 @@ Use, modification, redistribution, and commercial use are allowed, provided the 
 - [Repository Map](docs/REPO_MAP.md)
 - [GUI Baseline 2026-04-14](docs/GUI_BASELINE_2026-04-14.md)
 - [Next Model Prompt](docs/NEXT_MODEL_PROMPT.md)
+- [TaishanPi GUI Notes](docs/boards/TaishanPi_GUI.md)
+- [ColorEasyPICO2 GUI Notes](docs/boards/ColorEasyPICO2_GUI.md)
 
 ## Local Build
 

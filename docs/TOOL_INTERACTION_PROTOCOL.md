@@ -2,7 +2,17 @@
 
 This document records the current GUI-to-tool interaction contract.
 
-This protocol is expected to evolve with the private runtime and local agent. When the underlying tools change, this document should be updated first, then the GUI should be adapted.
+This is a GUI-specific protocol document.
+
+It does not define the OpenCode plugin contract. For OpenCode <-> `dbt-agentd`, use:
+
+- [OPENCODE_DBT_AGENT_PROTOCOL.md](/Users/kvell/kk-project/docker-project/docker_mac_env/development-board-toolchain/docs/OPENCODE_DBT_AGENT_PROTOCOL.md)
+
+For the current stack baseline and reading order, use:
+
+- [STACK_BASELINE_2026-04-14.md](/Users/kvell/kk-project/docker-project/docker_mac_env/development-board-toolchain/docs/STACK_BASELINE_2026-04-14.md)
+
+This protocol is expected to evolve with the private runtime and local agent. When the underlying GUI-facing tools change, this document should be updated first, then the GUI should be adapted.
 
 ## Local Install Roots
 

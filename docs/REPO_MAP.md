@@ -39,3 +39,9 @@
 - `docs/REPO_MAP.md`
 - `docs/GUI_BASELINE_2026-04-14.md`
 - `docs/NEXT_MODEL_PROMPT.md`
+- `docs/STACK_BASELINE_2026-04-14.md`
+- `docs/DBT_AGENTD_BASELINE.md`
+- `docs/OPENCODE_DBT_AGENT_PROTOCOL.md`
+- `docs/OFFLINE_PACKAGE_BASELINE.md`
+- `docs/boards/TaishanPi_GUI.md`
+- `docs/boards/ColorEasyPICO2_GUI.md`
