@@ -44,5 +44,15 @@
 - `docs/OPENCODE_DBT_AGENT_PROTOCOL.md`
 - `docs/OFFLINE_PACKAGE_BASELINE.md`
 - `docs/MULTI_CLIENT_DEVICE_COORDINATION.md`
+- `docs/RP2350_INITIAL_FIRMWARE_BASELINE.md`
 - `docs/boards/TaishanPi_GUI.md`
 - `docs/boards/ColorEasyPICO2_GUI.md`
+
+## External RP2350 Initial Firmware Sources
+
+- `../RP2350/initial_firmware/ColorEasyPICO2`
+  - maintained initialization firmware source for `ColorEasyPICO2`
+- `../RP2350/initial_firmware/RaspberryPiPico2W`
+  - maintained initialization firmware source for `Pico 2 W`
+- `../RP2350/initial_firmware/build_initial_firmware.sh`
+  - helper to build the maintained RP2350 initialization UF2 images

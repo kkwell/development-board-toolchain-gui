@@ -1,6 +1,6 @@
 # Offline Package Baseline
 
-This document records the current offline packaging layout for version `1.0.4`.
+This document records the current offline packaging layout for version `1.0.5`.
 
 ## Packaging Layers
 
@@ -19,7 +19,7 @@ Location:
 
 Primary archive:
 
-- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/runtime/development-board-toolchain-runtime-1.0.4.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/runtime/development-board-toolchain-runtime-1.0.4.tar.gz)
+- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/runtime/development-board-toolchain-runtime-1.0.5.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/runtime/development-board-toolchain-runtime-1.0.5.tar.gz)
 
 ### 2. Local control plane
 
@@ -34,7 +34,7 @@ Location:
 
 Primary archive:
 
-- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/agent/dbt-agentd-macos-arm64-1.0.4.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/agent/dbt-agentd-macos-arm64-1.0.4.tar.gz)
+- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/agent/dbt-agentd-macos-arm64-1.0.5.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/agent/dbt-agentd-macos-arm64-1.0.5.tar.gz)
 
 ### 3. Board-specific offline packages
 
@@ -57,8 +57,8 @@ Current board environment archives are under:
 
 Current `ColorEasyPICO2` archives:
 
-- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_environments/ColorEasyPICO2/dbt-coloreasypico2-minimal-runtime-1.0.4.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_environments/ColorEasyPICO2/dbt-coloreasypico2-minimal-runtime-1.0.4.tar.gz)
-- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_environments/ColorEasyPICO2/dbt-coloreasypico2-full-build-1.0.4.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_environments/ColorEasyPICO2/dbt-coloreasypico2-full-build-1.0.4.tar.gz)
+- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_environments/ColorEasyPICO2/dbt-coloreasypico2-minimal-runtime-1.0.5.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_environments/ColorEasyPICO2/dbt-coloreasypico2-minimal-runtime-1.0.5.tar.gz)
+- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_environments/ColorEasyPICO2/dbt-coloreasypico2-full-build-1.0.5.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_environments/ColorEasyPICO2/dbt-coloreasypico2-full-build-1.0.5.tar.gz)
 
 ## Current Offline Board Bundles
 
@@ -66,7 +66,7 @@ Current `ColorEasyPICO2` archives:
 
 Offline bundle:
 
-- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_offline_packages/TaishanPi/dbt-taishanpi-offline-bundle-1.0.4.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_offline_packages/TaishanPi/dbt-taishanpi-offline-bundle-1.0.4.tar.gz)
+- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_offline_packages/TaishanPi/dbt-taishanpi-offline-bundle-1.0.5.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_offline_packages/TaishanPi/dbt-taishanpi-offline-bundle-1.0.5.tar.gz)
 
 Contains:
 
@@ -75,7 +75,7 @@ Contains:
 
 Current helper archive source:
 
-- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/compile_env_installer/out/dbt-compile-env-installer-1.0.4.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/compile_env_installer/out/dbt-compile-env-installer-1.0.4.tar.gz)
+- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/compile_env_installer/out/dbt-compile-env-installer-1.0.5.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/compile_env_installer/out/dbt-compile-env-installer-1.0.5.tar.gz)
 
 Current size:
 
@@ -85,7 +85,7 @@ Current size:
 
 Offline bundle:
 
-- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_offline_packages/ColorEasyPICO2/dbt-coloreasypico2-offline-bundle-1.0.4.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_offline_packages/ColorEasyPICO2/dbt-coloreasypico2-offline-bundle-1.0.4.tar.gz)
+- [/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_offline_packages/ColorEasyPICO2/dbt-coloreasypico2-offline-bundle-1.0.5.tar.gz](/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/board_offline_packages/ColorEasyPICO2/dbt-coloreasypico2-offline-bundle-1.0.5.tar.gz)
 
 Contains:
 

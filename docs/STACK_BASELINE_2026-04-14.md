@@ -2,7 +2,7 @@
 
 Current validated stack version:
 
-- `1.0.4`
+- `1.0.5`
 
 This document is the top-level index for the current `dbt-agentd`-centric architecture.
 
@@ -24,6 +24,7 @@ If the next AI session needs to continue from this version, read in this order:
 3. [TOOL_INTERACTION_PROTOCOL.md](/Users/kvell/kk-project/docker-project/docker_mac_env/development-board-toolchain/docs/TOOL_INTERACTION_PROTOCOL.md)
 4. [OFFLINE_PACKAGE_BASELINE.md](/Users/kvell/kk-project/docker-project/docker_mac_env/development-board-toolchain/docs/OFFLINE_PACKAGE_BASELINE.md)
 5. [MULTI_CLIENT_DEVICE_COORDINATION.md](/Users/kvell/kk-project/docker-project/docker_mac_env/development-board-toolchain/docs/MULTI_CLIENT_DEVICE_COORDINATION.md)
+6. [RP2350_INITIAL_FIRMWARE_BASELINE.md](/Users/kvell/kk-project/docker-project/docker_mac_env/development-board-toolchain/docs/RP2350_INITIAL_FIRMWARE_BASELINE.md)
 
 ## Component Boundaries
 
@@ -38,6 +39,7 @@ Responsibilities:
 - job submission for long-running actions
 - local knowledge and offline package discovery
 - device identity and lease coordination baseline
+- RP2350 initialization firmware path and asset baseline
 
 Must not do:
 

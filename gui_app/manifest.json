@@ -2,7 +2,7 @@
   "product": "gui_app",
   "name": "DBT-Agent",
   "bundle_name": "DBT-Agent.app",
-  "archive_name": "DBT-Agent-1.0.2.zip",
-  "version": "1.0.2",
+  "archive_name": "DBT-Agent-1.0.5.zip",
+  "version": "1.0.5",
   "update_manifest": "toolkit-manifest.json"
 }

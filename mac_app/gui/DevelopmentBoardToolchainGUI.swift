@@ -205,10 +205,57 @@ struct SupportedBoard: Identifiable {
         searchableTerms: ["pico", "pico2", "coloreasy", "rp2350", "rp2350a", "single-usb", "single usb", "uf2", "serial", "coloreasypico2", "嘉立创", "jlc"]
     )
 
+    static let pico2W = SupportedBoard(
+        id: "Pico2W",
+        englishName: "Pico 2 W",
+        displayName: "Pico 2 W",
+        manufacturer: "Raspberry Pi",
+        modelDirectoryName: nil,
+        variantDisplayNames: ["Pico 2 W"],
+        shortSummary: "Raspberry Pi Pico 2 W，基于 RP2350 并带有 Wi‑Fi 模块，适合后续扩展无线联网控制场景。",
+        detailSummary: "Pico 2 W 作为 Pico 2 系列的 Wi‑Fi 型号，保留 RP2350 的 UF2/串口开发方式，并额外提供无线联网扩展空间。当前 GUI 已纳入目录与产品资料展示，后续按底层工具协议补齐具体能力。",
+        integrationStatus: "目录和产品资料已接入，等待插件与底层工具能力落地。",
+        integrationReady: false,
+        thumbnailLabel: "PICO 2 W",
+        thumbnailSymbol: "dot.radiowaves.left.and.right",
+        accentStart: Color(red: 0.31, green: 0.46, blue: 0.96),
+        accentEnd: Color(red: 0.16, green: 0.74, blue: 0.80),
+        capabilities: [.usbProbe, .uf2MassStorage, .uf2Deploy, .serialConsole, .networkReachability],
+        searchableTerms: ["pico 2 w", "pico2w", "raspberry pi", "rp2350", "wifi", "wireless", "uf2", "serial"]
+    )
+
     static let catalog: [SupportedBoard] = [
         .taishanPi,
         .colorEasyPICO2,
+        .pico2W,
     ]
+}
+
+private func isRP2350BoardID(_ boardID: String?) -> Bool {
+    switch boardID {
+    case "ColorEasyPICO2", "Pico2W", "RaspberryPiPico2W":
+        return true
+    default:
+        return false
+    }
+}
+
+private func localBoardID(forPluginBoardID boardID: String?) -> String? {
+    switch boardID {
+    case "RaspberryPiPico2W":
+        return "Pico2W"
+    default:
+        return boardID
+    }
+}
+
+private func pluginBoardID(forLocalBoardID boardID: String?) -> String? {
+    switch boardID {
+    case "Pico2W":
+        return "RaspberryPiPico2W"
+    default:
+        return boardID
+    }
 }
 
 enum BoardCatalogLayout {
@@ -341,6 +388,22 @@ struct DetectedBoardCandidate: Identifiable, Equatable {
 struct DeviceSelectionPrompt: Identifiable, Equatable {
     let id = UUID()
     let candidates: [DetectedBoardCandidate]
+}
+
+struct RP2350FlashTargetPrompt: Identifiable, Equatable {
+    let id = UUID()
+    let boardID: String
+    let variantID: String
+    let boardDisplayName: String
+    let candidates: [DetectedBoardCandidate]
+}
+
+struct RP2350BoardStatusContext {
+    let connected: Bool
+    let connectionLabel: String
+    let stateLabel: String
+    let runtimePort: String
+    let summary: String
 }
 
 enum ToolkitHeroState {
@@ -571,6 +634,12 @@ struct StatusSnapshot: Equatable {
     let ping: Bool
     let ssh: Bool
     let controlService: Bool
+    let activeDeviceID: String
+    let activeBoardID: String
+    let connectedDeviceCount: Int
+    let connectedDeviceSignature: String
+    let rp2350State: String
+    let rp2350Connected: Bool
     let dockerReady: Bool
     let usbnetHelperInstalled: Bool
 }
@@ -683,16 +752,14 @@ enum ProcessExecutor {
                 process.currentDirectoryURL = currentDirectoryURL
                 process.environment = environment
 
-                let stdout = Pipe()
-                let stderr = Pipe()
-                process.standardOutput = stdout
-                process.standardError = stderr
+                let outputPipe = Pipe()
+                process.standardOutput = outputPipe
+                process.standardError = outputPipe
 
                 do {
                     try process.run()
+                    let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
                     process.waitUntilExit()
-                    let data = stdout.fileHandleForReading.readDataToEndOfFile() +
-                        stderr.fileHandleForReading.readDataToEndOfFile()
                     let output = String(data: data, encoding: .utf8) ?? ""
                     continuation.resume(returning: (
                         process.terminationStatus,
@@ -717,15 +784,13 @@ enum ProcessExecutor {
         process.currentDirectoryURL = currentDirectoryURL
         process.environment = environment
 
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
 
         try process.run()
+        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        let data = stdout.fileHandleForReading.readDataToEndOfFile() +
-            stderr.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
         return (
             process.terminationStatus,
@@ -817,7 +882,17 @@ final class SystemEventMonitor {
         return product.contains("rockchip") ||
             product.contains("download gadget") ||
             product.contains("usb ecm") ||
-            product.contains("tspi")
+            product.contains("ethernet gadget") ||
+            product.contains("rndis") ||
+            product.contains("cdc ecm") ||
+            product.contains("cdc-ecm") ||
+            product.contains("usb network") ||
+            product.contains("ncm") ||
+            product.contains("tspi") ||
+            product.contains("coloreasy") ||
+            product.contains("pico") ||
+            product.contains("pico2") ||
+            product.contains("rp2350")
     }
 
     private func registryUInt16(service: io_registry_entry_t, keys: [String]) -> UInt16? {
@@ -1003,6 +1078,7 @@ final class ToolkitViewModel: ObservableObject {
     @Published var preferredControlDeviceID: String?
     @Published var showingSupportedBoardCatalog = true
     @Published var deviceSelectionPrompt: DeviceSelectionPrompt?
+    @Published var rp2350FlashTargetPrompt: RP2350FlashTargetPrompt?
     @Published var developmentInstallStatus = DevelopmentInstallStatus()
     @Published var installerLastDetail = "等待检查"
     @Published var toolkitUpdateStatus = ToolkitUpdateStatus()
@@ -1021,8 +1097,13 @@ final class ToolkitViewModel: ObservableObject {
 
     private var didBootstrapLocalAgent = false
     private var localAgentStartInProgress = false
+    private var lastLocalAgentStartAttemptAt: Date?
+    private var didCleanupLocalAgentProcesses = false
     private var lastRefreshErrorSignature = ""
     private var lastSnapshot: StatusSnapshot?
+    private var statusRefreshTask: Task<Void, Never>?
+    private var queuedStatusRefreshPending = false
+    private var queuedStatusRefreshSilent = true
     private var eventTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
     private var transportMonitorTask: Task<Void, Never>?
@@ -1046,7 +1127,6 @@ final class ToolkitViewModel: ObservableObject {
     private var monitoringStarted = false
     private var lastEventAt = Date()
     private var lastIncompatibleServiceRecoveryAt: Date?
-    private var refreshSequence = 0
     private var boardStateGraceUntil: Date?
     private var boardPingFalseCount = 0
     private var boardSSHFalseCount = 0
@@ -1057,6 +1137,11 @@ final class ToolkitViewModel: ObservableObject {
     private var shouldRelaunchAfterToolkitUpdate = false
     private var lastAutomaticUSBNetRepairAt: Date?
     private var lastAutomaticUSBNetRepairSignature = ""
+    private var lastLocalUSBRemovedAt: Date?
+    private var suppressConnectedAgentStatusUntil: Date?
+    private var lastBackgroundStatusNotificationAt: Date?
+    private var lastBackgroundStatusNotificationMessage = ""
+    private var rp2350ModeTransitionUntil: Date?
 
     private enum BoardLogicFamily {
         case taishanPi
@@ -1066,6 +1151,15 @@ final class ToolkitViewModel: ObservableObject {
 
     private var usesEventDrivenStatus: Bool {
         false
+    }
+
+    var rp2350ModeTransitionActive: Bool {
+        guard let until = rp2350ModeTransitionUntil else { return false }
+        return until > Date()
+    }
+
+    var rp2350ModeTransitionHint: String {
+        "设备模式切换中，请等待状态更新完成"
     }
 
     private func boardLogicFamily(
@@ -1083,7 +1177,7 @@ final class ToolkitViewModel: ObservableObject {
         switch resolvedBoardID {
         case "TaishanPi":
             return .taishanPi
-        case "ColorEasyPICO2":
+        case let value where isRP2350BoardID(value):
             return .colorEasyPICO2
         default:
             return .generic
@@ -1168,13 +1262,46 @@ final class ToolkitViewModel: ObservableObject {
         return generic.appendingPathComponent("runtime", isDirectory: true)
     }
 
-    func rp2350InitialProgramURL() -> URL {
-        sharedRuntimeRootURL().appendingPathComponent("assets/ColorEasyPICO2/initial.uf2", isDirectory: false)
+    func rp2350InitialProgramURL(boardID: String? = nil) -> URL {
+        let resolvedBoardID = boardID
+            ?? preferredControlBoardID
+            ?? connectedBoardID
+            ?? currentControlCandidate?.boardID
+            ?? status?.device?.board_id
+            ?? "ColorEasyPICO2"
+        let normalizedBoardID: String
+        switch resolvedBoardID {
+        case "Pico2W", "RaspberryPiPico2W":
+            normalizedBoardID = "RaspberryPiPico2W"
+        default:
+            normalizedBoardID = "ColorEasyPICO2"
+        }
+        let preferredURL = sharedRuntimeRootURL().appendingPathComponent("assets/\(normalizedBoardID)/initial.uf2", isDirectory: false)
+        if FileManager.default.fileExists(atPath: preferredURL.path) {
+            return preferredURL
+        }
+        return sharedRuntimeRootURL().appendingPathComponent("assets/ColorEasyPICO2/initial.uf2", isDirectory: false)
     }
 
     private func configureRP2350Defaults() {
         let candidateUF2 = rp2350InitialProgramURL()
         if rp2350UF2Path.isEmpty, FileManager.default.fileExists(atPath: candidateUF2.path) {
+            rp2350UF2Path = candidateUF2.path
+        }
+    }
+
+    private func refreshRP2350DefaultUF2Path(for boardID: String?) {
+        guard isRP2350BoardID(boardID) else {
+            return
+        }
+        let runtimeAssetsRoot = sharedRuntimeRootURL().appendingPathComponent("assets", isDirectory: true).path
+        let currentPath = rp2350UF2Path.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shouldReplace = currentPath.isEmpty || currentPath.hasPrefix(runtimeAssetsRoot)
+        guard shouldReplace else {
+            return
+        }
+        let candidateUF2 = rp2350InitialProgramURL(boardID: boardID)
+        if FileManager.default.fileExists(atPath: candidateUF2.path) {
             rp2350UF2Path = candidateUF2.path
         }
     }
@@ -1259,13 +1386,19 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func reloadInstalledBoardPluginMetadata() {
-        var validInstalled = installedBoardPlugins.merging(discoveredInstalledUserPluginVersions()) { current, _ in current }
+        let mergedInstalled = installedBoardPlugins.merging(discoveredInstalledUserPluginVersions()) { current, _ in current }
+        var validInstalled: [String: String] = [:]
+        for (boardID, version) in mergedInstalled {
+            let localID = localBoardID(forPluginBoardID: boardID) ?? boardID
+            validInstalled[localID] = version
+        }
         var metadata: [String: InstalledBoardPluginMetadata] = [:]
 
         for (boardID, version) in validInstalled {
             do {
+                let pluginID = pluginBoardID(forLocalBoardID: boardID) ?? boardID
                 let installRoot = boardPluginInstallRootURL(for: boardID)
-                let validated = try validateInstalledBoardPlugin(at: installRoot, expectedBoardID: boardID, expectedVersion: version, pluginSource: "user")
+                let validated = try validateInstalledBoardPlugin(at: installRoot, expectedBoardID: pluginID, expectedVersion: version, pluginSource: "user")
                 metadata[boardID] = validated
             } catch {
                 validInstalled.removeValue(forKey: boardID)
@@ -1368,7 +1501,7 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func boardPluginInstallRootURL(for boardID: String) -> URL {
-        userBoardPluginsRootURL().appendingPathComponent(boardID, isDirectory: true)
+        userBoardPluginsRootURL().appendingPathComponent(pluginBoardID(forLocalBoardID: boardID) ?? boardID, isDirectory: true)
     }
 
     func userBoardPluginsRootURL() -> URL {
@@ -1469,17 +1602,23 @@ final class ToolkitViewModel: ObservableObject {
                   let manifest = try? JSONDecoder().decode(BoardPluginManifest.self, from: data) else {
                 continue
             }
-            discovered[entry.lastPathComponent] = manifest.version
+            let localID = localBoardID(forPluginBoardID: manifest.id) ?? localBoardID(forPluginBoardID: entry.lastPathComponent) ?? entry.lastPathComponent
+            discovered[localID] = manifest.version
         }
         return discovered
     }
 
     func boardPluginInstalledVersion(_ boardID: String) -> String? {
-        installedBoardPluginMetadata[boardID]?.version ?? installedBoardPlugins[boardID]
+        let pluginID = pluginBoardID(forLocalBoardID: boardID) ?? boardID
+        return installedBoardPluginMetadata[boardID]?.version ??
+            installedBoardPlugins[boardID] ??
+            installedBoardPluginMetadata[pluginID]?.version ??
+            installedBoardPlugins[pluginID]
     }
 
     func boardPluginCatalogVersion(_ boardID: String) -> String? {
-        boardPluginCatalogVersions[boardID]
+        let pluginID = pluginBoardID(forLocalBoardID: boardID) ?? boardID
+        return boardPluginCatalogVersions[boardID] ?? boardPluginCatalogVersions[pluginID]
     }
 
     func boardPluginDisplayVersion(_ boardID: String) -> String {
@@ -1491,15 +1630,17 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func remoteBoardPluginEntry(_ boardID: String) -> RemoteBoardPluginEntry? {
-        remoteBoardPluginEntries[boardID]
+        let pluginID = pluginBoardID(forLocalBoardID: boardID) ?? boardID
+        return remoteBoardPluginEntries[boardID] ?? remoteBoardPluginEntries[pluginID]
     }
 
     func installedBoardToolingMetadata(_ boardID: String) -> InstalledBoardPluginMetadata? {
-        installedBoardPluginMetadata[boardID]
+        let pluginID = pluginBoardID(forLocalBoardID: boardID) ?? boardID
+        return installedBoardPluginMetadata[boardID] ?? installedBoardPluginMetadata[pluginID]
     }
 
     func canRemoveBoardPlugin(_ boardID: String) -> Bool {
-        installedBoardPluginMetadata[boardID] != nil
+        return installedBoardToolingMetadata(boardID) != nil
     }
 
     func activeVariantID(for boardID: String) -> String? {
@@ -1557,8 +1698,8 @@ final class ToolkitViewModel: ObservableObject {
 
     private func currentOperationRoute() -> (boardID: String?, variantID: String?, deviceID: String?) {
         let selectedCandidate = currentControlCandidate
-        let boardID = selectedCandidate?.boardID ?? preferredControlBoardID ?? connectedBoardID
-        let variantID = boardID.flatMap { activeVariantID(for: $0) }
+        let boardID = preferredControlBoardID ?? connectedBoardID ?? selectedCandidate?.boardID
+        let variantID = boardID.flatMap { activeVariantID(for: $0) } ?? boardID
         let deviceID = selectedCandidate?.deviceID ?? preferredControlDeviceID ?? status?.active_device_id ?? status?.device_id
         return (boardID, variantID, deviceID)
     }
@@ -1841,6 +1982,97 @@ final class ToolkitViewModel: ObservableObject {
         localAgentRootURL().appendingPathComponent("run", isDirectory: true)
     }
 
+    func localAgentPIDFileURL() -> URL {
+        localAgentRunRootURL().appendingPathComponent("dbt-agentd.pid")
+    }
+
+    func setLocalAgentRunning(_ value: Bool) {
+        if localAgentRunning != value {
+            localAgentRunning = value
+        }
+    }
+
+    func readLocalAgentPID() -> Int32? {
+        let pidURL = localAgentPIDFileURL()
+        guard let text = try? String(contentsOf: pidURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              let pid = Int32(text),
+              pid > 0
+        else {
+            return nil
+        }
+        return pid
+    }
+
+    func writeLocalAgentPID(_ pid: Int32?) {
+        let pidURL = localAgentPIDFileURL()
+        if let pid {
+            try? FileManager.default.createDirectory(at: localAgentRunRootURL(), withIntermediateDirectories: true)
+            try? "\(pid)\n".write(to: pidURL, atomically: true, encoding: .utf8)
+        } else {
+            try? FileManager.default.removeItem(at: pidURL)
+        }
+    }
+
+    func runLocalAgentShell(_ script: String) async throws -> (Int32, String) {
+        try await ProcessExecutor.run(
+            executableURL: URL(fileURLWithPath: "/bin/bash"),
+            arguments: ["-lc", script],
+            currentDirectoryURL: localAgentRootURL(),
+            environment: ProcessInfo.processInfo.environment
+        )
+    }
+
+    func localAgentListenerPID() async -> Int32? {
+        let script = "/usr/sbin/lsof -nP -iTCP:\(localAgentPort) -sTCP:LISTEN -t 2>/dev/null | /usr/bin/head -n 1"
+        guard let result = try? await runLocalAgentShell(script), result.0 == 0 else {
+            return nil
+        }
+        let text = result.1.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let pid = Int32(text), pid > 0 else {
+            return nil
+        }
+        return pid
+    }
+
+    func cleanupStaleLocalAgentProcessesIfNeeded(force: Bool = false) async {
+        if didCleanupLocalAgentProcesses && !force {
+            return
+        }
+        let listenerPID = await localAgentListenerPID()
+        let keepPID = listenerPID.map(String.init) ?? "0"
+        let script = """
+        keep_pid="\(keepPID)"
+        for pid in $(/usr/bin/pgrep -x dbt-agentd 2>/dev/null || true); do
+          if [ "$keep_pid" != "0" ] && [ "$pid" = "$keep_pid" ]; then
+            continue
+          fi
+          /bin/kill -TERM "$pid" 2>/dev/null || true
+        done
+        /bin/sleep 0.2
+        for pid in $(/usr/bin/pgrep -x dbt-agentd 2>/dev/null || true); do
+          if [ "$keep_pid" != "0" ] && [ "$pid" = "$keep_pid" ]; then
+            continue
+          fi
+          /bin/kill -KILL "$pid" 2>/dev/null || true
+        done
+        """
+        _ = try? await runLocalAgentShell(script)
+        writeLocalAgentPID(listenerPID)
+        didCleanupLocalAgentProcesses = true
+    }
+
+    func waitForLocalAgentHealthz(timeoutSeconds: TimeInterval = 6.0) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if (try? await fetchLocalAgentHealthz()) != nil {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        return false
+    }
+
     func fetchLocalAgentHealthz() async throws {
         var request = URLRequest(url: localAgentURL(path: "healthz"))
         request.timeoutInterval = 2
@@ -1848,16 +2080,22 @@ final class ToolkitViewModel: ObservableObject {
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw ToolkitGUIError.commandFailed("本地 DBT Agent 不可用")
         }
-        localAgentRunning = true
+        setLocalAgentRunning(true)
     }
 
     func ensureLocalAgentStartedIfNeeded() async {
         if localAgentStartInProgress {
             return
         }
+        await cleanupStaleLocalAgentProcessesIfNeeded()
         if (try? await fetchLocalAgentHealthz()) != nil {
             didBootstrapLocalAgent = true
-            localAgentRunning = true
+            setLocalAgentRunning(true)
+            return
+        }
+        if let lastLocalAgentStartAttemptAt,
+           Date().timeIntervalSince(lastLocalAgentStartAttemptAt) < 4
+        {
             return
         }
         let binaryURL = localAgentBinaryURL()
@@ -1868,7 +2106,9 @@ final class ToolkitViewModel: ObservableObject {
         }
         localAgentStartInProgress = true
         defer { localAgentStartInProgress = false }
+        lastLocalAgentStartAttemptAt = Date()
         do {
+            await cleanupStaleLocalAgentProcessesIfNeeded(force: true)
             try FileManager.default.createDirectory(at: localAgentRunRootURL(), withIntermediateDirectories: true)
             let logURL = localAgentRunRootURL().appendingPathComponent("dbt-agentd.log")
             FileManager.default.createFile(atPath: logURL.path, contents: nil)
@@ -1882,13 +2122,25 @@ final class ToolkitViewModel: ObservableObject {
             process.standardOutput = logHandle
             process.standardError = logHandle
             try process.run()
-            try? await Task.sleep(for: .milliseconds(400))
-            _ = try await fetchLocalAgentHealthz()
+            writeLocalAgentPID(process.processIdentifier)
+            guard await waitForLocalAgentHealthz() else {
+                process.terminate()
+                try? await Task.sleep(for: .milliseconds(200))
+                if process.isRunning {
+                    process.interrupt()
+                }
+                if process.isRunning {
+                    process.terminate()
+                }
+                writeLocalAgentPID(nil)
+                throw ToolkitGUIError.commandFailed("本地 DBT Agent 启动超时")
+            }
             didBootstrapLocalAgent = true
-            localAgentRunning = true
+            setLocalAgentRunning(true)
+            await cleanupStaleLocalAgentProcessesIfNeeded(force: true)
             appendActivity(level: .success, title: "本地 DBT Agent", message: "已启动")
         } catch {
-            localAgentRunning = false
+            setLocalAgentRunning(false)
             appendActivity(level: .warning, title: "本地 DBT Agent", message: "启动失败", detail: error.localizedDescription)
         }
     }
@@ -1900,7 +2152,7 @@ final class ToolkitViewModel: ObservableObject {
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw ToolkitGUIError.commandFailed("本地 DBT Agent 状态请求失败")
         }
-        localAgentRunning = true
+        setLocalAgentRunning(true)
         return try JSONDecoder().decode(AgentStatusSummaryResponse.self, from: data)
     }
 
@@ -1931,7 +2183,7 @@ final class ToolkitViewModel: ObservableObject {
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw ToolkitGUIError.commandFailed("本地 DBT Agent 动作预检失败")
         }
-        localAgentRunning = true
+        setLocalAgentRunning(true)
         return try JSONDecoder().decode(AgentActionPreflightResponse.self, from: data)
     }
 
@@ -1946,7 +2198,7 @@ final class ToolkitViewModel: ObservableObject {
         if http.statusCode != 200 || envelope.ok == false || envelope.task == nil {
             throw ToolkitGUIError.commandFailed(envelope.error ?? "本地 DBT Agent 任务请求失败")
         }
-        localAgentRunning = true
+        setLocalAgentRunning(true)
         return envelope.task!
     }
 
@@ -1987,7 +2239,7 @@ final class ToolkitViewModel: ObservableObject {
         if http.statusCode != 200 || envelope.ok == false || envelope.task == nil {
             throw ToolkitGUIError.commandFailed(envelope.error ?? "本地 DBT Agent 刷写任务启动失败")
         }
-        localAgentRunning = true
+        setLocalAgentRunning(true)
         return envelope
     }
 
@@ -2024,7 +2276,7 @@ final class ToolkitViewModel: ObservableObject {
         if http.statusCode != 200 || envelope.ok == false || envelope.task == nil {
             throw ToolkitGUIError.commandFailed(envelope.error ?? "本地 DBT Agent 重启任务启动失败")
         }
-        localAgentRunning = true
+        setLocalAgentRunning(true)
         return envelope
     }
 
@@ -2061,7 +2313,7 @@ final class ToolkitViewModel: ObservableObject {
         if http.statusCode != 200 || envelope.ok == false || envelope.task == nil {
             throw ToolkitGUIError.commandFailed(envelope.error ?? "本地 DBT Agent 任务启动失败")
         }
-        localAgentRunning = true
+        setLocalAgentRunning(true)
         return envelope
     }
 
@@ -2080,11 +2332,13 @@ final class ToolkitViewModel: ObservableObject {
             throw ToolkitGUIError.commandFailed("本地 DBT Agent 暂不可用")
         }
         let resolvedDeviceID = deviceID ?? currentOperationRoute().deviceID
+        let resolvedBoardID = pluginBoardID(forLocalBoardID: boardID) ?? boardID ?? "ColorEasyPICO2"
+        let resolvedVariantID = pluginBoardID(forLocalBoardID: variantID) ?? variantID ?? resolvedBoardID
 
         var payload: [String: Any] = [
             "action": action,
-            "board_id": boardID ?? "ColorEasyPICO2",
-            "variant_id": variantID ?? "ColorEasyPICO2",
+            "board_id": resolvedBoardID,
+            "variant_id": resolvedVariantID,
         ]
         if let resolvedDeviceID, !resolvedDeviceID.isEmpty {
             payload["device_id"] = resolvedDeviceID
@@ -2115,8 +2369,82 @@ final class ToolkitViewModel: ObservableObject {
         if http.statusCode != 200 || envelope.ok == false || envelope.task == nil {
             throw ToolkitGUIError.commandFailed(envelope.error ?? "RP2350 任务启动失败")
         }
-        localAgentRunning = true
+        setLocalAgentRunning(true)
         return envelope
+    }
+
+    func runLocalAgentRP2350JobAndWait(
+        action: String,
+        boardID: String? = nil,
+        variantID: String? = nil,
+        deviceID: String? = nil,
+        uf2Path: String? = nil,
+        outputPath: String? = nil,
+        lines: Int? = nil,
+        follow: Bool? = nil,
+        timeout: TimeInterval = 20
+    ) async throws -> ToolkitTask {
+        let envelope = try await postLocalAgentRP2350Job(
+            action: action,
+            boardID: boardID,
+            variantID: variantID,
+            deviceID: deviceID,
+            uf2Path: uf2Path,
+            outputPath: outputPath,
+            lines: lines,
+            follow: follow
+        )
+        guard let initialTask = envelope.task, let taskID = initialTask.id else {
+            throw ToolkitGUIError.commandFailed("本地 DBT Agent 未返回 RP2350 任务信息")
+        }
+        let deadline = Date().addingTimeInterval(timeout)
+        var latestTask = initialTask
+        while !Task.isCancelled, Date() < deadline {
+            latestTask = try await fetchLocalAgentTask(taskID)
+            if latestTask.status == "finished" {
+                guard latestTask.ok == true else {
+                    throw ToolkitGUIError.commandFailed(latestTask.output_tail ?? "RP2350 任务执行失败")
+                }
+                return latestTask
+            }
+            try await Task.sleep(for: .milliseconds(700))
+        }
+        throw ToolkitGUIError.timeout("RP2350 任务超时")
+    }
+
+    private func bindRP2350BoardModelIfNeeded(boardID: String?, variantID: String?, deviceID: String?) async throws {
+        guard let boardID, isRP2350BoardID(boardID) else {
+            return
+        }
+        let selectedRPDevice: ToolkitStatus.Device? = {
+            if let deviceID {
+                return status?.devices?.first(where: { $0.device_id == deviceID })
+            }
+            return nil
+        }()
+        let transportText = [
+            selectedRPDevice?.transport_name?.lowercased(),
+            selectedRPDevice?.interface_name?.lowercased(),
+            selectedRPDevice?.display_label?.lowercased(),
+        ].compactMap { $0 }.joined(separator: " ")
+        let routeRuntimeReady: Bool = {
+            if !transportText.isEmpty {
+                if transportText.contains("bootsel") { return false }
+                return transportText.contains("rp2350") || transportText.contains("usb") || transportText.contains("serial")
+            }
+            let rpState = ((status?.rp2350?.state ?? status?.usb?.mode ?? "")).lowercased()
+            return rpState.contains("runtime")
+        }()
+        guard routeRuntimeReady else {
+            return
+        }
+        _ = try await runLocalAgentRP2350JobAndWait(
+            action: "set_board_model",
+            boardID: boardID,
+            variantID: variantID ?? boardID,
+            deviceID: deviceID,
+            timeout: 12
+        )
     }
 
     func runLocalAgentRuntimeJobAndWait(
@@ -2157,6 +2485,9 @@ final class ToolkitViewModel: ObservableObject {
     private func queueRP2350Job(
         title: String,
         action: String,
+        boardID: String? = nil,
+        variantID: String? = nil,
+        deviceID: String? = nil,
         uf2Path: String? = nil,
         outputPath: String? = nil,
         lines: Int? = nil,
@@ -2166,6 +2497,13 @@ final class ToolkitViewModel: ObservableObject {
         guard localAgentRunning else {
             throw ToolkitGUIError.commandFailed("本地 DBT Agent 暂不可用")
         }
+        let resolvedRoute = currentOperationRoute()
+        let resolvedBoardID = boardID ?? resolvedRoute.boardID
+        let resolvedVariantID = variantID ?? resolvedRoute.variantID
+        let resolvedDeviceID = deviceID ?? resolvedRoute.deviceID
+        if action != "detect" && action != "set_board_model" {
+            try await bindRP2350BoardModelIfNeeded(boardID: resolvedBoardID, variantID: resolvedVariantID, deviceID: resolvedDeviceID)
+        }
         clearInlineError()
         taskPollTask?.cancel()
         dismissedFinishedTaskIDs.removeAll()
@@ -2173,6 +2511,9 @@ final class ToolkitViewModel: ObservableObject {
         pendingTaskTitle = title
         let response = try await postLocalAgentRP2350Job(
             action: action,
+            boardID: resolvedBoardID,
+            variantID: resolvedVariantID,
+            deviceID: resolvedDeviceID,
             uf2Path: uf2Path,
             outputPath: outputPath,
             lines: lines,
@@ -2193,7 +2534,7 @@ final class ToolkitViewModel: ObservableObject {
         }
 
         let transportName: String? = {
-            if agentStatus.board_id == "ColorEasyPICO2" {
+            if isRP2350BoardID(agentStatus.board_id) {
                 return agentStatus.connected_device == true ? "RP2350 单 USB" : nil
             }
             return agentStatus.usb_ecm_ready == true ? "USB ECM" : nil
@@ -2342,10 +2683,11 @@ final class ToolkitViewModel: ObservableObject {
 
         Task {
             do {
+                let pluginID = pluginBoardID(forLocalBoardID: board.id) ?? board.id
                 let downloadURL = derivedBoardPluginDownloadURL(boardID: board.id, version: version)
                 let checksumURL = derivedBoardPluginChecksumURL(boardID: board.id, version: version)
                 try FileManager.default.createDirectory(at: boardPluginDownloadsRootURL(), withIntermediateDirectories: true)
-                let zipURL = boardPluginDownloadsRootURL().appendingPathComponent("\(board.id)-\(version).zip")
+                let zipURL = boardPluginDownloadsRootURL().appendingPathComponent("\(pluginID)-\(version).zip")
 
                 try await downloadBoardPluginArchive(from: downloadURL, to: zipURL, boardID: board.id)
 
@@ -2365,10 +2707,12 @@ final class ToolkitViewModel: ObservableObject {
                 try unzipBoardPluginArchive(zipURL: zipURL, destinationURL: installRoot)
 
                 boardPluginOperations[board.id] = BoardPluginOperationState(kind: .installing, progress: 0.93, message: "校验插件内容")
-                let metadata = try validateInstalledBoardPlugin(at: installRoot, expectedBoardID: board.id, expectedVersion: version)
+                let metadata = try validateInstalledBoardPlugin(at: installRoot, expectedBoardID: pluginID, expectedVersion: version)
 
                 installedBoardPlugins[board.id] = version
+                installedBoardPlugins.removeValue(forKey: pluginID)
                 installedBoardPluginMetadata[board.id] = metadata
+                installedBoardPluginMetadata.removeValue(forKey: pluginID)
                 try persistInstalledBoardPlugins()
                 boardPluginOperations[board.id] = BoardPluginOperationState(kind: .idle, progress: nil, message: "")
                 appendActivity(level: .success, title: "插件安装", message: "\(board.displayName) 插件安装完成", detail: "版本 \(version)")
@@ -2404,7 +2748,10 @@ final class ToolkitViewModel: ObservableObject {
                     try FileManager.default.removeItem(at: installRoot)
                 }
                 installedBoardPlugins.removeValue(forKey: board.id)
+                let pluginID = pluginBoardID(forLocalBoardID: board.id) ?? board.id
+                installedBoardPlugins.removeValue(forKey: pluginID)
                 installedBoardPluginMetadata.removeValue(forKey: board.id)
+                installedBoardPluginMetadata.removeValue(forKey: pluginID)
                 try persistInstalledBoardPlugins()
                 if connectedBoardID == board.id {
                     connectedBoardID = nil
@@ -2430,8 +2777,8 @@ final class ToolkitViewModel: ObservableObject {
 
     private func applyRemoteBoardPluginEntries(_ entries: [RemoteBoardPluginEntry], checkedAt: String) {
         boardCatalog = mergedBoardCatalog(with: entries)
-        remoteBoardPluginEntries = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
-        boardPluginCatalogVersions = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0.version ?? "") })
+        remoteBoardPluginEntries = Dictionary(uniqueKeysWithValues: entries.map { (localBoardID(forPluginBoardID: $0.id) ?? $0.id, $0) })
+        boardPluginCatalogVersions = Dictionary(uniqueKeysWithValues: entries.map { (localBoardID(forPluginBoardID: $0.id) ?? $0.id, $0.version ?? "") })
         boardPluginCatalogCheckedAt = checkedAt
         updateBoardRoutingFromCurrentState()
     }
@@ -2442,7 +2789,8 @@ final class ToolkitViewModel: ObservableObject {
         var seen = Set<String>()
 
         for entry in entries {
-            let base = builtInByID[entry.id] ?? placeholderBoard(for: entry)
+            let localID = localBoardID(forPluginBoardID: entry.id) ?? entry.id
+            let base = builtInByID[localID] ?? placeholderBoard(for: entry, localBoardID: localID)
             merged.append(
                 SupportedBoard(
                     id: base.id,
@@ -2463,7 +2811,7 @@ final class ToolkitViewModel: ObservableObject {
                     searchableTerms: base.searchableTerms
                 )
             )
-            seen.insert(entry.id)
+            seen.insert(localID)
         }
 
         for board in SupportedBoard.catalog where !seen.contains(board.id) {
@@ -2473,24 +2821,25 @@ final class ToolkitViewModel: ObservableObject {
         return merged
     }
 
-    private func placeholderBoard(for entry: RemoteBoardPluginEntry) -> SupportedBoard {
-        SupportedBoard(
-            id: entry.id,
-            englishName: entry.id,
-            displayName: entry.display_name ?? entry.id,
+    private func placeholderBoard(for entry: RemoteBoardPluginEntry, localBoardID overrideLocalBoardID: String? = nil) -> SupportedBoard {
+        let resolvedID = overrideLocalBoardID ?? localBoardID(forPluginBoardID: entry.id) ?? entry.id
+        return SupportedBoard(
+            id: resolvedID,
+            englishName: resolvedID,
+            displayName: entry.display_name ?? resolvedID,
             manufacturer: entry.manufacturer ?? "未知厂家",
             modelDirectoryName: nil,
-            variantDisplayNames: entry.variants ?? [entry.display_name ?? entry.id],
+            variantDisplayNames: entry.variants ?? [entry.display_name ?? resolvedID],
             shortSummary: "该开发板插件来自远端插件目录，当前 GUI 版本尚未内置详细说明。",
             detailSummary: "该开发板插件已从远端目录发现，但当前应用版本没有内置该开发板的详细资料。后续可通过插件形式补全识别、动作和展示信息。",
             integrationStatus: "已发现远端插件目录项，等待安装。",
             integrationReady: false,
-            thumbnailLabel: entry.id.uppercased(),
+            thumbnailLabel: resolvedID.uppercased(),
             thumbnailSymbol: "shippingbox.fill",
             accentStart: Color(red: 0.35, green: 0.45, blue: 0.62),
             accentEnd: Color(red: 0.22, green: 0.30, blue: 0.42),
             capabilities: [.usbProbe],
-            searchableTerms: [entry.id.lowercased()]
+            searchableTerms: [resolvedID.lowercased()]
         )
     }
 
@@ -2501,14 +2850,39 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func setPreferredControlBoard(_ boardID: String?) {
-        if preferredControlBoardID == boardID {
-            return
-        }
         preferredControlBoardID = boardID
+        refreshRP2350DefaultUF2Path(for: boardID)
         if let boardID, !boardID.isEmpty {
             UserDefaults.standard.set(boardID, forKey: "preferredControlBoardID")
         } else {
             UserDefaults.standard.removeObject(forKey: "preferredControlBoardID")
+        }
+        if let boardID, !boardID.isEmpty {
+            if let candidate =
+                activeControlDeviceCandidates.first(where: { $0.boardID == boardID }) ??
+                detectedBoardCandidates.first(where: { $0.boardID == boardID }) {
+                selectedDetectedCandidateID = candidate.id
+                connectedBoardID = boardID
+                connectedBoardVariantID = candidate.variantID
+                connectedBoardDisplayName = stableBoardDisplayName(for: boardID, variantID: candidate.variantID) ?? candidate.displayName
+                if preferredControlDeviceID != candidate.deviceID {
+                    preferredControlDeviceID = candidate.deviceID
+                    UserDefaults.standard.set(candidate.deviceID, forKey: "preferredControlDeviceID")
+                }
+            } else {
+                if let currentDeviceID = preferredControlDeviceID,
+                   let currentCandidate =
+                    activeControlDeviceCandidates.first(where: { $0.deviceID == currentDeviceID }) ??
+                    detectedBoardCandidates.first(where: { $0.deviceID == currentDeviceID }),
+                   currentCandidate.boardID != boardID {
+                    setPreferredControlDevice(nil)
+                }
+                if let board = supportedBoard(for: boardID) {
+                    connectedBoardID = board.id
+                    connectedBoardVariantID = nil
+                    connectedBoardDisplayName = board.conciseModelLabel
+                }
+            }
         }
         refreshActionAvailability()
     }
@@ -2530,7 +2904,7 @@ final class ToolkitViewModel: ObservableObject {
             selectedDetectedCandidateID = candidate.id
             connectedBoardID = candidate.boardID
             connectedBoardVariantID = candidate.variantID
-            connectedBoardDisplayName = candidate.displayName
+            connectedBoardDisplayName = stableBoardDisplayName(for: candidate.boardID, variantID: candidate.variantID) ?? candidate.displayName
             if preferredControlBoardID != candidate.boardID {
                 preferredControlBoardID = candidate.boardID
                 UserDefaults.standard.set(candidate.boardID, forKey: "preferredControlBoardID")
@@ -2544,7 +2918,8 @@ final class ToolkitViewModel: ObservableObject {
     func showControlPage(for board: SupportedBoard) {
         connectedBoardID = board.id
         connectedBoardVariantID = nil
-        connectedBoardDisplayName = board.variantDisplayNames.first ?? board.displayName
+        connectedBoardDisplayName = board.conciseModelLabel
+        refreshRP2350DefaultUF2Path(for: board.id)
         setPreferredControlBoard(board.id)
         if let candidate = detectedBoardCandidates.first(where: { $0.boardID == board.id }) {
             setPreferredControlDevice(candidate.deviceID)
@@ -2571,7 +2946,7 @@ final class ToolkitViewModel: ObservableObject {
         selectedDetectedCandidateID = candidate.id
         connectedBoardID = candidate.boardID
         connectedBoardVariantID = candidate.variantID
-        connectedBoardDisplayName = candidate.displayName
+        connectedBoardDisplayName = stableBoardDisplayName(for: candidate.boardID, variantID: candidate.variantID) ?? candidate.displayName
         setPreferredControlBoard(candidate.boardID)
         setPreferredControlDevice(candidate.deviceID)
         showingSupportedBoardCatalog = false
@@ -2583,7 +2958,7 @@ final class ToolkitViewModel: ObservableObject {
         selectedDetectedCandidateID = candidate.id
         connectedBoardID = candidate.boardID
         connectedBoardVariantID = candidate.variantID
-        connectedBoardDisplayName = candidate.displayName
+        connectedBoardDisplayName = stableBoardDisplayName(for: candidate.boardID, variantID: candidate.variantID) ?? candidate.displayName
         setPreferredControlDevice(candidate.deviceID)
         if !preserveCatalogPresentation {
             setPreferredControlBoard(candidate.boardID)
@@ -2599,66 +2974,85 @@ final class ToolkitViewModel: ObservableObject {
 
     private func updateBoardRoutingFromCurrentState() {
         let candidates = scanDetectedBoardCandidates()
+        let targetBoardID = preferredControlBoardID ?? connectedBoardID
         if detectedBoardCandidates != candidates {
             detectedBoardCandidates = candidates
         }
         refreshActionAvailability()
-
-        let currentSignature = candidateSignature(for: candidates)
         if candidates.isEmpty {
             if deviceSelectionPrompt != nil {
                 deviceSelectionPrompt = nil
             }
-            return
-        }
-
-        if candidates.count == 1, let first = candidates.first {
-            refreshDetectedBoardState(first, preserveCatalogPresentation: showingSupportedBoardCatalog)
-            return
-        }
-
-        let semanticCandidates = Dictionary(
-            grouping: candidates,
-            by: { semanticCandidateSignature(for: $0) }
-        )
-        if semanticCandidates.count == 1, let preferred = candidates.first {
-            refreshDetectedBoardState(preferred, preserveCatalogPresentation: showingSupportedBoardCatalog)
+            if rp2350FlashTargetPrompt != nil {
+                rp2350FlashTargetPrompt = nil
+            }
+            selectedDetectedCandidateID = nil
+            preferredControlDeviceID = nil
             return
         }
 
         if let selectedDetectedCandidateID,
-           let selected = candidates.first(where: { $0.id == selectedDetectedCandidateID })
+           let selected = candidates.first(where: { $0.id == selectedDetectedCandidateID }),
+           targetBoardID == nil || boardMatches(selected.boardID, targetBoardID: targetBoardID!)
         {
-            refreshDetectedBoardState(selected, preserveCatalogPresentation: showingSupportedBoardCatalog)
+            connectedBoardID = selected.boardID
+            connectedBoardVariantID = selected.variantID
+            connectedBoardDisplayName = stableBoardDisplayName(for: selected.boardID, variantID: selected.variantID) ?? selected.displayName
+            if preferredControlDeviceID == nil || preferredControlDeviceID == selected.deviceID {
+                setPreferredControlDevice(selected.deviceID)
+            }
+            deviceSelectionPrompt = nil
             return
         }
 
         if let preferredControlDeviceID,
-           let preferred = candidates.first(where: { $0.deviceID == preferredControlDeviceID })
+           let preferred = candidates.first(where: { $0.deviceID == preferredControlDeviceID }),
+           targetBoardID == nil || boardMatches(preferred.boardID, targetBoardID: targetBoardID!)
         {
-            refreshDetectedBoardState(preferred, preserveCatalogPresentation: showingSupportedBoardCatalog)
+            selectedDetectedCandidateID = preferred.id
+            connectedBoardID = preferred.boardID
+            connectedBoardVariantID = preferred.variantID
+            connectedBoardDisplayName = stableBoardDisplayName(for: preferred.boardID, variantID: preferred.variantID) ?? preferred.displayName
+            deviceSelectionPrompt = nil
             return
         }
 
-        if let activeDeviceID = status?.active_device_id ?? status?.device_id,
-           let active = candidates.first(where: { $0.deviceID == activeDeviceID }) {
-            refreshDetectedBoardState(active, preserveCatalogPresentation: showingSupportedBoardCatalog)
-            return
-        }
-
-        if showingSupportedBoardCatalog,
-           let baseline = boardCatalogBaselineSignature,
-           baseline == currentSignature
-        {
-            if deviceSelectionPrompt != nil {
-                deviceSelectionPrompt = nil
+        if let connectedBoardID,
+           let board = supportedBoard(for: connectedBoardID) {
+            if let sameBoardCandidate = candidates.first(where: { $0.boardID == connectedBoardID }) {
+                selectedDetectedCandidateID = sameBoardCandidate.id
+                connectedBoardVariantID = sameBoardCandidate.variantID
+                let currentPreferredMatchesBoard = candidates.contains {
+                    $0.deviceID == preferredControlDeviceID && boardMatches($0.boardID, targetBoardID: connectedBoardID)
+                }
+                if preferredControlDeviceID == nil || !currentPreferredMatchesBoard {
+                    setPreferredControlDevice(sameBoardCandidate.deviceID)
+                }
+            } else {
+                selectedDetectedCandidateID = nil
             }
+            connectedBoardDisplayName = board.conciseModelLabel
+            deviceSelectionPrompt = nil
             return
         }
 
-        if let first = candidates.first {
-            refreshDetectedBoardState(first, preserveCatalogPresentation: showingSupportedBoardCatalog)
-        } else if deviceSelectionPrompt != nil {
+        if let preferredBoardID = preferredControlBoardID,
+           let board = supportedBoard(for: preferredBoardID) {
+            connectedBoardID = board.id
+            if let sameBoardCandidate = candidates.first(where: { $0.boardID == preferredBoardID }) {
+                selectedDetectedCandidateID = sameBoardCandidate.id
+                connectedBoardVariantID = sameBoardCandidate.variantID
+                setPreferredControlDevice(sameBoardCandidate.deviceID)
+            } else {
+                selectedDetectedCandidateID = nil
+                connectedBoardVariantID = nil
+            }
+            connectedBoardDisplayName = board.conciseModelLabel
+            deviceSelectionPrompt = nil
+            return
+        }
+
+        if deviceSelectionPrompt != nil {
             deviceSelectionPrompt = nil
         }
     }
@@ -2715,33 +3109,6 @@ final class ToolkitViewModel: ObservableObject {
             )
         }
 
-        if statusDevices.isEmpty {
-            candidates.append(contentsOf: scanUSBBoardCandidates())
-            candidates.append(contentsOf: scanMountedVolumeBoardCandidates())
-        }
-
-        if candidates.isEmpty,
-           isBoardPluginInstalled("TaishanPi"),
-           hasRockchipSignalFromStatus()
-        {
-            let interfaceName = status?.usbnet?.iface.map { "USB ECM / \($0)" } ?? "USB 接口"
-            candidates.append(
-                DetectedBoardCandidate(
-                    id: "TaishanPi-service-fallback",
-                    deviceID: status?.active_device_id ?? status?.device_id,
-                    boardID: "TaishanPi",
-                    variantID: "1M-RK3566",
-                    displayName: "泰山派（1M-RK3566）",
-                    manufacturer: "嘉立创",
-                    interfaceName: interfaceName,
-                    transportName: deviceConnectionText,
-                    transportLocator: status?.usbnet?.board_ip,
-                    sourceName: "状态服务",
-                    priority: 90
-                )
-            )
-        }
-
         let candidatesWithStableIdentity = candidates.filter { $0.deviceID != nil }
         let semanticKeysWithStableIdentity = Set(
             candidatesWithStableIdentity.map { "\($0.boardID)::\($0.variantID ?? "default")" }
@@ -2790,162 +3157,6 @@ final class ToolkitViewModel: ObservableObject {
             status?.board?.ping == true ||
             status?.board?.ssh_port_open == true ||
             status?.board?.control_service == true
-    }
-
-    private func scanUSBBoardCandidates() -> [DetectedBoardCandidate] {
-        guard let matching = IOServiceMatching("IOUSBHostDevice") else {
-            return []
-        }
-        var iterator: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS else {
-            return []
-        }
-        defer { IOObjectRelease(iterator) }
-
-        let rockchipVendorID: UInt16 = 0x2207
-        let loaderPID: UInt16 = 0x350a
-        let usbECMPID: UInt16 = 0x3606
-
-        var candidates: [DetectedBoardCandidate] = []
-        while true {
-            let service = IOIteratorNext(iterator)
-            if service == IO_OBJECT_NULL {
-                break
-            }
-            defer { IOObjectRelease(service) }
-
-            let vendorID = registryUInt16(service: service, keys: ["idVendor", "kUSBVendorID"]) ?? 0
-            let productID = registryUInt16(service: service, keys: ["idProduct", "kUSBProductID"]) ?? 0
-            let product = registryString(service: service, keys: ["USB Product Name", "product", "kUSBProductString"]) ?? "USB Device"
-            let serial = registryString(service: service, keys: ["USB Serial Number", "serial", "kUSBSerialNumberString"]) ?? ""
-            let locationID = registryUInt32(service: service, keys: ["locationID", "kUSBDevicePropertyLocationID"]) ?? 0
-            let productLower = product.lowercased()
-
-            if isBoardPluginInstalled("TaishanPi"),
-               vendorID == rockchipVendorID ||
-               productLower.contains("rockchip") ||
-               productLower.contains("download gadget") ||
-               productLower.contains("usb ecm")
-            {
-                let transport: String
-                if productID == loaderPID || productLower.contains("download gadget") {
-                    transport = "Loader USB"
-                } else if productID == usbECMPID || productLower.contains("usb ecm") {
-                    transport = "USB ECM"
-                } else {
-                    transport = "USB"
-                }
-                candidates.append(
-                    DetectedBoardCandidate(
-                        id: "TaishanPi-usb-\(locationID)-\(serial)",
-                        deviceID: nil,
-                        boardID: "TaishanPi",
-                        variantID: "1M-RK3566",
-                        displayName: "泰山派（1M-RK3566）",
-                        manufacturer: "嘉立创",
-                        interfaceName: "USB@0x\(String(format: "%08x", locationID))",
-                        transportName: transport,
-                        transportLocator: nil,
-                        sourceName: product,
-                        priority: 100
-                    )
-                )
-            }
-
-            if isBoardPluginInstalled("ColorEasyPICO2"),
-               productLower.contains("coloreasy") ||
-               productLower.contains("pico") ||
-               productLower.contains("rp2350")
-            {
-                candidates.append(
-                    DetectedBoardCandidate(
-                        id: "ColorEasyPICO2-usb-\(locationID)-\(serial)",
-                        deviceID: serial.isEmpty ? nil : "coloreasypico2::coloreasypico2::\(serial.lowercased())",
-                        boardID: "ColorEasyPICO2",
-                        variantID: "ColorEasyPICO2",
-                        displayName: "ColorEasyPICO2",
-                        manufacturer: "嘉立创",
-                        interfaceName: "USB@0x\(String(format: "%08x", locationID))",
-                        transportName: "RP2350 单 USB",
-                        transportLocator: nil,
-                        sourceName: product,
-                        priority: 80
-                    )
-                )
-            }
-        }
-        return candidates
-    }
-
-    private func scanMountedVolumeBoardCandidates() -> [DetectedBoardCandidate] {
-        guard isBoardPluginInstalled("ColorEasyPICO2") else {
-            return []
-        }
-        let keys: [URLResourceKey] = [.volumeNameKey, .nameKey]
-        let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? []
-        return urls.compactMap { url -> DetectedBoardCandidate? in
-            let resourceValues = try? url.resourceValues(forKeys: Set(keys))
-            let volumeName = resourceValues?.volumeName ?? resourceValues?.name ?? url.lastPathComponent
-            let lower = volumeName.lowercased()
-            guard lower.contains("rpi-rp2") || lower.contains("pico") || lower.contains("coloreasy") else {
-                return nil
-            }
-            return DetectedBoardCandidate(
-                id: "ColorEasyPICO2-volume-\(volumeName)",
-                deviceID: nil,
-                boardID: "ColorEasyPICO2",
-                variantID: "ColorEasyPICO2",
-                displayName: "ColorEasyPICO2",
-                manufacturer: "嘉立创",
-                interfaceName: volumeName,
-                transportName: "RP2350 单 USB",
-                transportLocator: url.path,
-                sourceName: url.path,
-                priority: 70
-            )
-        }
-    }
-
-    private func registryUInt16(service: io_registry_entry_t, keys: [String]) -> UInt16? {
-        for key in keys {
-            guard let value = IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() else {
-                continue
-            }
-            if let number = value as? NSNumber {
-                return UInt16(truncating: number)
-            }
-            if let data = value as? Data {
-                let bytes = [UInt8](data.prefix(2))
-                if bytes.count == 2 {
-                    return UInt16(bytes[0]) | (UInt16(bytes[1]) << 8)
-                }
-            }
-        }
-        return nil
-    }
-
-    private func registryUInt32(service: io_registry_entry_t, keys: [String]) -> UInt32? {
-        for key in keys {
-            guard let value = IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() else {
-                continue
-            }
-            if let number = value as? NSNumber {
-                return UInt32(truncating: number)
-            }
-        }
-        return nil
-    }
-
-    private func registryString(service: io_registry_entry_t, keys: [String]) -> String? {
-        for key in keys {
-            guard let value = IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() else {
-                continue
-            }
-            if let string = value as? String, !string.isEmpty {
-                return string
-            }
-        }
-        return nil
     }
 
     private func parseRemoteBoardPluginEntries(data: Data) throws -> [RemoteBoardPluginEntry] {
@@ -3537,13 +3748,16 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func refreshServiceState() async {
-        localAgentRunning = (try? await fetchLocalAgentHealthz()) != nil
+        setLocalAgentRunning((try? await fetchLocalAgentHealthz()) != nil)
         eventStreamConnected = false
     }
 
     func refreshTransportStatus(silent: Bool = true) async {
         do {
             let agentStatus = try await fetchLocalAgentStatusSummary()
+            if shouldIgnoreStaleConnectedAgentStatus(agentStatus) {
+                return
+            }
             let runtimeStatus = mergedRuntimeStatus(from: agentStatus) ?? agentStatus.runtime_status
             let nextUSB = runtimeStatus?.usb ?? ToolkitStatus.USB(mode: "absent", product: nil, pid: nil)
             let nextUSBNet = runtimeStatus?.usbnet ?? ToolkitStatus.USBNet(iface: nil, current_ip: nil, expected_ip: "198.19.77.2", board_ip: "198.19.77.1", configured: false)
@@ -3589,6 +3803,9 @@ final class ToolkitViewModel: ObservableObject {
         }
         do {
             let agentStatus = try await fetchLocalAgentStatusSummary()
+            if shouldIgnoreStaleConnectedAgentStatus(agentStatus) {
+                return
+            }
             let runtimeStatus = mergedRuntimeStatus(from: agentStatus) ?? agentStatus.runtime_status
             let nextBoard = runtimeStatus?.board ?? ToolkitStatus.Board(ping: false, ssh_port_open: false, control_service: false)
             let merged = mergedStatus(
@@ -3612,6 +3829,9 @@ final class ToolkitViewModel: ObservableObject {
     func refreshHostStatus(silent: Bool = true) async {
         do {
             let agentStatus = try await fetchLocalAgentStatusSummary()
+            if shouldIgnoreStaleConnectedAgentStatus(agentStatus) {
+                return
+            }
             let runtimeStatus = mergedRuntimeStatus(from: agentStatus) ?? agentStatus.runtime_status
             let merged = mergedStatus(
                 host: runtimeStatus?.host,
@@ -3794,13 +4014,15 @@ final class ToolkitViewModel: ObservableObject {
         }
     }
 
-    func appendActivity(level: ActivityLevel, title: String, message: String, detail: String? = nil) {
+    func appendActivity(level: ActivityLevel, title: String, message: String, detail: String? = nil, updateSummary: Bool = true) {
         let entry = ActivityEntry(level: level, title: title, message: message, detail: detail)
         activities.insert(entry, at: 0)
         if activities.count > 50 {
             activities.removeLast(activities.count - 50)
         }
-        lastActionSummary = "\(title): \(message)"
+        if updateSummary {
+            lastActionSummary = "\(title): \(message)"
+        }
     }
 
     func presentInlineError(_ message: String) {
@@ -3973,6 +4195,8 @@ final class ToolkitViewModel: ObservableObject {
 
     func pollTask(_ taskID: String) {
         taskPollTask?.cancel()
+        backgroundTaskPolls[taskID]?.cancel()
+        backgroundTaskPolls[taskID] = nil
         taskPollTask = Task { [weak self] in
             guard let self else {
                 return
@@ -3981,9 +4205,28 @@ final class ToolkitViewModel: ObservableObject {
                 presentInlineError("旧任务轮询接口已弃用，请重新执行当前操作。")
                 return
             }
+            let startedAt = Date()
             while !Task.isCancelled {
                 do {
                     let task = try await fetchLocalAgentTask(taskID)
+                    if let timeout = taskTimeoutInterval(task),
+                       Date().timeIntervalSince(startedAt) > timeout,
+                       task.status != "finished" {
+                        pendingTaskTitle = ""
+                        currentTask = nil
+                        if task.action == "rp2350_enter_bootsel" || task.action == "rp2350_run" {
+                            rp2350ModeTransitionUntil = Date().addingTimeInterval(5)
+                            let message = "\(taskActionDisplayName(task))仍在后台确认状态，界面先继续可用。"
+                            appendActivity(level: .info, title: taskActionDisplayName(task), message: "后台继续确认", detail: message)
+                            sendUserNotification(title: taskActionDisplayName(task), message: "仍在后台确认状态")
+                            startBackgroundTaskPoll(taskID, actionName: taskActionDisplayName(task))
+                        } else {
+                            let message = "\(taskActionDisplayName(task))超时，请检查设备连接状态后重试。"
+                            presentInlineError(message)
+                            appendActivity(level: .error, title: taskActionDisplayName(task), message: "执行超时", detail: message)
+                        }
+                        return
+                    }
                     handleTaskUpdate(task)
                     if task.status == "finished" {
                         return
@@ -3994,6 +4237,58 @@ final class ToolkitViewModel: ObservableObject {
                 }
                 try? await Task.sleep(for: .seconds(1))
             }
+        }
+    }
+
+    private func startBackgroundTaskPoll(_ taskID: String, actionName: String) {
+        backgroundTaskPolls[taskID]?.cancel()
+        backgroundTaskPolls[taskID] = Task { [weak self] in
+            guard let self else { return }
+            defer { self.backgroundTaskPolls[taskID] = nil }
+            let deadline = Date().addingTimeInterval(25)
+            while !Task.isCancelled, Date() < deadline {
+                do {
+                    let task = try await fetchLocalAgentTask(taskID)
+                    if task.status == "finished" {
+                        handleTaskUpdate(task)
+                        return
+                    }
+                } catch {
+                    return
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+            sendUserNotification(title: actionName, message: "后台确认超时，请手动检查设备状态")
+        }
+    }
+
+    private func taskTimeoutInterval(_ task: ToolkitTask) -> TimeInterval? {
+        switch task.action {
+        case "rp2350_enter_bootsel":
+            return 10
+        case "rp2350_run":
+            return 10
+        case "rp2350_flash", "rp2350_verify", "rp2350_save_flash":
+            return 45
+        default:
+            return nil
+        }
+    }
+
+    private func taskActionDisplayName(_ task: ToolkitTask) -> String {
+        switch task.action {
+        case "rp2350_enter_bootsel":
+            return "进入 BOOTSEL"
+        case "rp2350_flash":
+            return "UF2 刷写"
+        case "rp2350_verify":
+            return "UF2 校验"
+        case "rp2350_save_flash":
+            return "Flash 回读"
+        case "rp2350_run":
+            return "恢复运行态"
+        default:
+            return pendingTaskTitle.isEmpty ? "任务" : pendingTaskTitle
         }
     }
 
@@ -4031,6 +4326,9 @@ final class ToolkitViewModel: ObservableObject {
         taskPollTask?.cancel()
         pendingTaskTitle = ""
         if task.ok == true {
+            if task.action == "rp2350_enter_bootsel" || task.action == "rp2350_run" {
+                rp2350ModeTransitionUntil = Date().addingTimeInterval(3)
+            }
             if isInstallerTask(task) {
                 switch task.action {
                 case "release-build-image":
@@ -4091,10 +4389,32 @@ final class ToolkitViewModel: ObservableObject {
             sendUserNotification(title: task.action ?? "任务", message: "执行失败")
         }
         refreshStatus(silent: true)
+        scheduleFollowUpStatusRefreshes(for: task)
         Task {
             await refreshDevelopmentInstallStatus()
         }
         refreshToolkitUpdateStatus()
+    }
+
+    private func scheduleFollowUpStatusRefreshes(for task: ToolkitTask) {
+        guard task.ok == true else {
+            return
+        }
+        let action = task.action ?? ""
+        guard action == "rp2350_enter_bootsel" ||
+            action == "rp2350_run" ||
+            action == "rp2350_flash" ||
+            action == "rp2350_detect"
+        else {
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(700))
+            self.refreshStatus(silent: true)
+            try? await Task.sleep(for: .milliseconds(900))
+            self.refreshStatus(silent: true)
+        }
     }
 
     func clearPostFlashRecovery() {
@@ -4569,7 +4889,8 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func makeSnapshot(from status: ToolkitStatus) -> StatusSnapshot {
-        StatusSnapshot(
+        let connectedDevices = connectedDeviceRecords(from: status)
+        return StatusSnapshot(
             usbMode: status.usb?.mode ?? "-",
             usbProduct: status.usb?.product ?? "-",
             usbPid: status.usb?.pid ?? "-",
@@ -4579,6 +4900,15 @@ final class ToolkitViewModel: ObservableObject {
             ping: status.board?.ping ?? false,
             ssh: status.board?.ssh_port_open ?? false,
             controlService: status.board?.control_service ?? false,
+            activeDeviceID: status.active_device_id ?? status.device_id ?? "-",
+            activeBoardID: status.device?.board_id ?? "-",
+            connectedDeviceCount: connectedDevices.count,
+            connectedDeviceSignature: connectedDevices
+                .map { connectedDeviceSignatureComponent(for: $0) }
+                .sorted()
+                .joined(separator: "|"),
+            rp2350State: status.rp2350?.state ?? "-",
+            rp2350Connected: status.rp2350?.connected ?? false,
             dockerReady: status.host?.docker_daemon ?? false,
             usbnetHelperInstalled: status.host?.usbnet_helper_installed ?? false
         )
@@ -4602,6 +4932,9 @@ final class ToolkitViewModel: ObservableObject {
         }
         if old.controlService != new.controlService {
             changes.append((new.controlService ? .success : .warning, "控制服务变化", new.controlService ? "usb0 控制服务已恢复" : "usb0 控制服务不可达"))
+        }
+        if old.connectedDeviceCount != new.connectedDeviceCount {
+            changes.append((.info, "设备数量变化", "\(old.connectedDeviceCount) -> \(new.connectedDeviceCount)"))
         }
         if old.dockerReady != new.dockerReady {
             changes.append((new.dockerReady ? .success : .warning, "Docker 状态变化", new.dockerReady ? "Docker 已就绪" : "Docker 未就绪"))
@@ -4660,6 +4993,9 @@ final class ToolkitViewModel: ObservableObject {
         if newSnapshot.usbMode == "usb-ecm" && newSnapshot.usbConfigured &&
             newSnapshot.ping && newSnapshot.ssh {
             boardStateGraceUntil = nil
+        }
+        if rp2350UF2Path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            configureRP2350Defaults()
         }
         persistWorkspaceSelection()
         updateBoardRoutingFromCurrentState()
@@ -4723,14 +5059,37 @@ final class ToolkitViewModel: ObservableObject {
         if isFlashTaskRunning {
             return
         }
+        let liveBoardID = currentLiveCandidate?.boardID ?? status?.device?.board_id
+        let liveBoardIsRP2350 = isRP2350BoardID(liveBoardID)
         if reason == "usb-removed" {
+            lastLocalUSBRemovedAt = Date()
             boardStateGraceUntil = nil
             stopBoardMonitoring()
             resetAutomaticUSBNetRepairState(cancelTask: true)
+            if !liveBoardIsRP2350 && onlineConnectedDeviceCount <= 1 {
+                suppressConnectedAgentStatusUntil = Date().addingTimeInterval(4.5)
+                applyDisconnectedUSBState()
+            }
         } else if reason == "usb-added" {
-            boardStateGraceUntil = Date().addingTimeInterval(8)
+            lastLocalUSBRemovedAt = nil
+            suppressConnectedAgentStatusUntil = nil
+            if liveBoardIsRP2350 {
+                boardStateGraceUntil = nil
+            } else {
+                boardStateGraceUntil = Date().addingTimeInterval(8)
+                applyTransientUSBStateIfNeeded()
+            }
         } else if reason == "network", status?.usb?.mode == "usb-ecm" {
-            boardStateGraceUntil = Date().addingTimeInterval(5)
+            if onlineConnectedDeviceCount <= 1, currentUSBECMInterfaceMissing() {
+                lastLocalUSBRemovedAt = Date()
+                suppressConnectedAgentStatusUntil = Date().addingTimeInterval(4.5)
+                boardStateGraceUntil = nil
+                stopBoardMonitoring()
+                resetAutomaticUSBNetRepairState(cancelTask: true)
+                applyDisconnectedUSBState()
+            } else {
+                boardStateGraceUntil = Date().addingTimeInterval(5)
+            }
         }
         pendingSystemRefreshTask?.cancel()
         pendingSystemRefreshTask = Task { [weak self] in
@@ -4830,15 +5189,62 @@ final class ToolkitViewModel: ObservableObject {
             ),
             host: current.host,
             device: nil,
-            device_id: current.device_id,
-            active_device_id: current.active_device_id,
-            devices: current.devices,
-            rp2350: current.rp2350,
-            summary: nil,
-            device_summary: nil
+            device_id: nil,
+            active_device_id: nil,
+            devices: [],
+            rp2350: nil,
+            summary: "没有开发板设备连接",
+            device_summary: "没有开发板设备连接"
         )
         status = disconnected
         lastSnapshot = makeSnapshot(from: disconnected)
+    }
+
+    private func shouldIgnoreStaleConnectedAgentStatus(_ agentStatus: AgentStatusSummaryResponse) -> Bool {
+        if agentStatus.connected_device != true {
+            lastLocalUSBRemovedAt = nil
+            suppressConnectedAgentStatusUntil = nil
+            return false
+        }
+        guard let suppressionUntil = suppressConnectedAgentStatusUntil else {
+            return false
+        }
+        if Date() < suppressionUntil {
+            return true
+        }
+        suppressConnectedAgentStatusUntil = nil
+        lastLocalUSBRemovedAt = nil
+        return false
+    }
+
+    private func currentUSBECMInterfaceMissing() -> Bool {
+        guard let status,
+              (status.usb?.mode ?? "").lowercased() == "usb-ecm",
+              let iface = status.usbnet?.iface,
+              !iface.isEmpty
+        else {
+            return false
+        }
+        return if_nametoindex(iface) == 0
+    }
+
+    private func connectedDeviceRecords(from status: ToolkitStatus) -> [ToolkitStatus.Device] {
+        if let devices = status.devices, !devices.isEmpty {
+            return devices.filter { $0.connected == true }
+        }
+        if let device = status.device, device.connected == true {
+            return [device]
+        }
+        return []
+    }
+
+    private func connectedDeviceSignatureComponent(for device: ToolkitStatus.Device) -> String {
+        if let deviceID = device.device_id, !deviceID.isEmpty {
+            return deviceID
+        }
+        let boardID = device.board_id ?? "unknown"
+        let locator = device.transport_locator ?? device.interface_name ?? device.display_label ?? boardID
+        return "\(boardID)::\(locator)"
     }
 
     func startTransitionWatch(reason: String, duration: TimeInterval = 28, step: TimeInterval = 1.0) {
@@ -4943,36 +5349,68 @@ final class ToolkitViewModel: ObservableObject {
         if busy && !silent {
             return
         }
-        refreshSequence += 1
-        let sequence = refreshSequence
+        if statusRefreshTask != nil {
+            queuedStatusRefreshPending = true
+            queuedStatusRefreshSilent = queuedStatusRefreshSilent && silent
+            return
+        }
         if !silent {
             busy = true
         }
-        Task {
-            await ensureLocalAgentStartedIfNeeded()
-            guard sequence == self.refreshSequence else {
+        statusRefreshTask = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            defer {
+                let shouldReplay = self.queuedStatusRefreshPending
+                let replaySilent = self.queuedStatusRefreshSilent
+                self.queuedStatusRefreshPending = false
+                self.queuedStatusRefreshSilent = true
+                self.statusRefreshTask = nil
                 if !silent {
                     self.busy = false
                 }
-                return
+                if shouldReplay {
+                    self.refreshStatus(silent: replaySilent)
+                }
             }
+            await ensureLocalAgentStartedIfNeeded()
             var localAgentApplied = false
             if let agentStatus = try? await fetchLocalAgentStatusSummary() {
-                self.applyLocalAgentStatusSummary(agentStatus, silent: true)
-                localAgentApplied = true
+                if !self.shouldIgnoreStaleConnectedAgentStatus(agentStatus) {
+                    self.applyLocalAgentStatusSummary(agentStatus, silent: true)
+                    localAgentApplied = true
+                }
             } else {
-                self.localAgentRunning = false
+                self.setLocalAgentRunning(false)
             }
             if !localAgentApplied {
-                let fallbackStatus = self.mergedStatus(
-                    summary: "本地 DBT Agent 暂不可用",
-                    deviceSummary: "本地 DBT Agent 暂不可用",
-                    updatedAt: ISO8601DateFormatter().string(from: Date())
-                )
-                self.applyStatusUpdate(fallbackStatus, silent: true)
+                let message = "后台状态探测失败，本次保留当前页面状态。"
+                if self.status == nil {
+                    let fallbackStatus = self.mergedStatus(
+                        summary: "本地 DBT Agent 暂不可用",
+                        deviceSummary: "本地 DBT Agent 暂不可用",
+                        updatedAt: ISO8601DateFormatter().string(from: Date())
+                    )
+                    self.applyStatusUpdate(fallbackStatus, silent: true)
+                } else {
+                    self.notifyBackgroundStatusFailureIfNeeded(message)
+                    self.appendActivity(level: .warning, title: "状态探测", message: message, updateSummary: false)
+                }
             }
-            busy = false
         }
+    }
+
+    private func notifyBackgroundStatusFailureIfNeeded(_ message: String) {
+        let now = Date()
+        if lastBackgroundStatusNotificationMessage == message,
+           let lastAt = lastBackgroundStatusNotificationAt,
+           now.timeIntervalSince(lastAt) < 10 {
+            return
+        }
+        lastBackgroundStatusNotificationMessage = message
+        lastBackgroundStatusNotificationAt = now
+        sendUserNotification(title: "DBT-Agent", message: message)
     }
 
     func runManagedAction(
@@ -5616,7 +6054,7 @@ final class ToolkitViewModel: ObservableObject {
 
     private func rp2350ConnectedOrSelected() -> Bool {
         let route = currentOperationRoute()
-        return route.boardID == "ColorEasyPICO2" || status?.device?.board_id == "ColorEasyPICO2"
+        return isRP2350BoardID(route.boardID) || isRP2350BoardID(status?.device?.board_id)
     }
 
     private func rp2350CurrentState() -> String {
@@ -5664,7 +6102,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350EnterBootsel() {
         Task {
             guard rp2350ConnectedOrSelected() else {
-                let message = "当前没有检测到 ColorEasyPICO2 设备。"
+                let message = "当前没有检测到可操作的 RP2350 开发板。"
                 presentInlineError(message)
                 appendActivity(level: .warning, title: "进入 BOOTSEL", message: message)
                 return
@@ -5684,7 +6122,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350ReturnToRuntime() {
         Task {
             guard rp2350ConnectedOrSelected() else {
-                let message = "当前没有检测到 ColorEasyPICO2 设备。"
+                let message = "当前没有检测到可操作的 RP2350 开发板。"
                 presentInlineError(message)
                 appendActivity(level: .warning, title: "恢复运行态", message: message)
                 return
@@ -5708,16 +6146,91 @@ final class ToolkitViewModel: ObservableObject {
                 appendActivity(level: .warning, title: "UF2 刷写", message: message)
                 return
             }
+            let route = currentOperationRoute()
+            guard let boardID = route.boardID, !boardID.isEmpty else {
+                let message = "当前没有选中的开发板类型。"
+                presentInlineError(message)
+                appendActivity(level: .warning, title: "UF2 刷写", message: message)
+                return
+            }
+            let variantID = route.variantID ?? boardID
+            let candidates = rp2350FlashCandidates()
+            guard !candidates.isEmpty else {
+                let message = "当前没有检测到可刷写的 RP2350 设备。"
+                presentInlineError(message)
+                appendActivity(level: .warning, title: "UF2 刷写", message: message)
+                return
+            }
+            if candidates.count > 1 {
+                rp2350FlashTargetPrompt = RP2350FlashTargetPrompt(
+                    boardID: boardID,
+                    variantID: variantID,
+                    boardDisplayName: supportedBoard(for: boardID)?.displayName ?? boardID,
+                    candidates: candidates
+                )
+                return
+            }
             busy = true
             defer { busy = false }
             do {
-                try await queueRP2350Job(title: "UF2 刷写", action: "flash", uf2Path: rp2350UF2Path, successMessage: "UF2 刷写任务已提交")
+                try await performRP2350FlashUF2(
+                    boardID: boardID,
+                    variantID: variantID,
+                    deviceID: candidates[0].deviceID
+                )
             } catch {
                 let detail = error.localizedDescription
                 presentInlineError(detail)
                 appendActivity(level: .error, title: "UF2 刷写", message: "执行失败", detail: detail)
             }
         }
+    }
+
+    private func performRP2350FlashUF2(boardID: String, variantID: String, deviceID: String?) async throws {
+        try await queueRP2350Job(
+            title: "UF2 刷写",
+            action: "flash",
+            boardID: boardID,
+            variantID: variantID,
+            deviceID: deviceID,
+            uf2Path: rp2350UF2Path,
+            successMessage: "UF2 刷写任务已提交"
+        )
+    }
+
+    private func rp2350FlashCandidates() -> [DetectedBoardCandidate] {
+        var seen = Set<String>()
+        return activeControlDeviceCandidates
+            .filter { isRP2350BoardID($0.boardID) && $0.deviceID != nil }
+            .filter { candidate in
+                guard let deviceID = candidate.deviceID else {
+                    return false
+                }
+                return seen.insert(deviceID).inserted
+            }
+    }
+
+    func confirmRP2350FlashTarget(_ candidate: DetectedBoardCandidate, prompt: RP2350FlashTargetPrompt) {
+        rp2350FlashTargetPrompt = nil
+        Task {
+            busy = true
+            defer { busy = false }
+            do {
+                try await performRP2350FlashUF2(
+                    boardID: prompt.boardID,
+                    variantID: prompt.variantID,
+                    deviceID: candidate.deviceID
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .error, title: "UF2 刷写", message: "执行失败", detail: detail)
+            }
+        }
+    }
+
+    func dismissRP2350FlashTargetPrompt() {
+        rp2350FlashTargetPrompt = nil
     }
 
     func rp2350VerifyUF2() {
@@ -5754,7 +6267,14 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func rp2350SaveFlash() {
-        let defaultName = "ColorEasyPICO2-flash-\(Self.fileSafeTimestamp()).uf2"
+        let baseName = currentOperationRoute().boardID
+            .flatMap { supportedBoard(for: $0)?.displayName }
+            ?? detectedBoard?.displayName
+            ?? "RP2350"
+        let fileSafeBaseName = baseName
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: " ", with: "-")
+        let defaultName = "\(fileSafeBaseName)-flash-\(Self.fileSafeTimestamp()).uf2"
         browseSaveFile(defaultName: defaultName) { selectedPath in
             self.rp2350ReadbackPath = selectedPath
             Task {
@@ -6150,10 +6670,25 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func supportedBoard(for boardID: String?) -> SupportedBoard? {
-        guard let boardID else {
+        guard let boardID = localBoardID(forPluginBoardID: boardID) else {
             return nil
         }
         return supportedBoards.first(where: { $0.id == boardID })
+    }
+
+    func stableBoardDisplayName(for boardID: String?, variantID: String? = nil) -> String? {
+        guard let board = supportedBoard(for: boardID) else {
+            return boardID
+        }
+        if let variantID,
+           !variantID.isEmpty,
+           variantID != board.id,
+           variantID != board.displayName,
+           variantID != board.modelDirectoryName
+        {
+            return board.conciseModelLabel
+        }
+        return board.conciseModelLabel
     }
 
     private var stableConnectedDeviceCandidates: [DetectedBoardCandidate] {
@@ -6253,14 +6788,17 @@ final class ToolkitViewModel: ObservableObject {
             return candidate
         }
         if let preferredControlBoardID,
-           let candidate = candidates.first(where: { $0.boardID == preferredControlBoardID }) {
+           let candidate = candidates.first(where: { boardMatches($0.boardID, targetBoardID: preferredControlBoardID) }) {
             return candidate
+        }
+        if preferredControlBoardID != nil || connectedBoardID != nil {
+            return nil
         }
         return currentLiveCandidate
     }
 
     var activeControlDeviceSelectionID: String {
-        currentControlCandidate?.deviceID ?? preferredControlDeviceID ?? status?.active_device_id ?? ""
+        currentControlCandidate?.deviceID ?? preferredControlDeviceID ?? ""
     }
 
     var activeControlDeviceCandidates: [DetectedBoardCandidate] {
@@ -6310,6 +6848,97 @@ final class ToolkitViewModel: ObservableObject {
         return candidate.conciseLabel
     }
 
+    private func boardMatches(_ candidateBoardID: String?, targetBoardID: String) -> Bool {
+        let localCandidateID = localBoardID(forPluginBoardID: candidateBoardID) ?? candidateBoardID
+        let localTargetID = localBoardID(forPluginBoardID: targetBoardID) ?? targetBoardID
+        return localCandidateID == localTargetID
+    }
+
+    func rp2350StatusContext(for board: SupportedBoard) -> RP2350BoardStatusContext {
+        let targetBoardID = board.id
+        let devices = (status?.devices ?? []).filter {
+            ($0.connected == true) && boardMatches($0.board_id, targetBoardID: targetBoardID)
+        }
+        let selectedDevice: ToolkitStatus.Device? = {
+            if let preferredControlDeviceID,
+               let exact = devices.first(where: { $0.device_id == preferredControlDeviceID }) {
+                return exact
+            }
+            return devices.first
+        }()
+
+        let rpBoardID = localBoardID(forPluginBoardID: status?.rp2350?.board_id) ?? status?.rp2350?.board_id
+        let exactRPContext = rpBoardID == targetBoardID
+        let inferredState: String
+        if exactRPContext {
+            let rawState = (status?.rp2350?.state ?? "").lowercased()
+            switch rawState {
+            case "runtime-resettable", "rp2350-runtime":
+                inferredState = "运行态"
+            case "bootsel", "rp2350-bootsel":
+                inferredState = "BOOTSEL"
+            case "not-found", "absent", "":
+                inferredState = "未连接"
+            default:
+                inferredState = rawState
+            }
+        } else {
+            let transportPieces = [
+                selectedDevice?.transport_name,
+                selectedDevice?.interface_name,
+                selectedDevice?.display_label,
+            ].compactMap { $0?.lowercased() }
+            let transportText = transportPieces.joined(separator: " ")
+            if transportText.contains("bootsel") {
+                inferredState = "BOOTSEL"
+            } else if !transportText.isEmpty {
+                inferredState = "运行态"
+            } else {
+                inferredState = "未连接"
+            }
+        }
+
+        let runtimePort: String = {
+            if exactRPContext {
+                return status?.rp2350?.runtime_port?.device
+                    ?? selectedDevice?.interface_name
+                    ?? "-"
+            }
+            return selectedDevice?.transport_locator
+                ?? selectedDevice?.interface_name
+                ?? "-"
+        }()
+
+        let connectionLabel: String = {
+            selectedDevice?.transport_name
+                ?? selectedDevice?.interface_name
+                ?? "等待连接"
+        }()
+
+        let summary: String = {
+            if exactRPContext {
+                return status?.rp2350?.summary_for_user
+                    ?? status?.summary
+                    ?? "等待检测 \(board.displayName) 状态"
+            }
+            if let selectedDevice {
+                let interfaceText = selectedDevice.interface_name
+                    ?? selectedDevice.transport_name
+                    ?? "RP2350 单 USB"
+                return "\(board.displayName) 已连接，接口：\(interfaceText)"
+            }
+            return "等待检测 \(board.displayName) 状态"
+        }()
+
+        return RP2350BoardStatusContext(
+            connected: selectedDevice != nil || (exactRPContext && status?.rp2350?.connected == true),
+            connectionLabel: connectionLabel,
+            stateLabel: inferredState,
+            runtimePort: runtimePort,
+            summary: summary
+        )
+    }
+
     func activeControlTooltip(for candidate: DetectedBoardCandidate) -> String {
         var lines: [String] = []
         lines.append(candidate.conciseLabel)
@@ -6345,7 +6974,7 @@ final class ToolkitViewModel: ObservableObject {
 
     var detectedHardwareDisplayName: String? {
         if let candidate = currentControlCandidate {
-            return candidate.conciseLabel
+            return stableBoardDisplayName(for: candidate.boardID, variantID: candidate.variantID) ?? candidate.conciseLabel
         }
         if let connectedBoardDisplayName, !connectedBoardDisplayName.isEmpty {
             return connectedBoardDisplayName
@@ -6356,12 +6985,25 @@ final class ToolkitViewModel: ObservableObject {
         return board.conciseModelLabel
     }
 
+    var controlPageBoardTitle: String {
+        if let stable = stableBoardDisplayName(for: connectedBoardID, variantID: connectedBoardVariantID) {
+            return stable
+        }
+        if let stable = stableBoardDisplayName(for: preferredControlBoardID) {
+            return stable
+        }
+        if let board = detectedBoard ?? supportedBoard(for: preferredControlBoardID) ?? supportedBoard(for: connectedBoardID) ?? liveDetectedBoard {
+            return board.conciseModelLabel
+        }
+        return detectedHardwareDisplayName ?? "开发板"
+    }
+
     var isWaitingForHardware: Bool {
         detectedBoardCandidates.isEmpty
     }
 
     var isShowingBoardCatalog: Bool {
-        showingSupportedBoardCatalog || connectedBoardID == nil
+        showingSupportedBoardCatalog || (preferredControlBoardID == nil && connectedBoardID == nil)
     }
 
     var heroState: ToolkitHeroState {
@@ -6410,6 +7052,11 @@ final class ToolkitViewModel: ObservableObject {
             let current = currentControlCandidate?.conciseLabel ?? detectedHardwareDisplayName ?? "当前设备"
             return "当前 \(onlineConnectedDeviceCount) 台 · 当前激活设备：\(current)"
         }
+        if onlineConnectedDeviceCount > 0, let liveBoard = liveDetectedBoard {
+            let prefix = "当前 \(onlineConnectedDeviceCount) 台 · "
+            let liveLabel = detectedHardwareDisplayName ?? liveBoard.conciseModelLabel
+            return "\(prefix)当前在线：\(liveLabel) · \(liveBoard.manufacturer)"
+        }
         if let board = heroTargetBoard, preferredControlBoardID != nil || connectedBoardID != nil {
             let prefix = onlineConnectedDeviceCount > 0 ? "当前 \(onlineConnectedDeviceCount) 台 · " : ""
             return "\(prefix)\(heroTargetDisplayName ?? board.displayName) · \(heroTargetMatchesLiveBoard ? "在线" : "设备未连接")"
@@ -6431,7 +7078,7 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     var deviceConnectionText: String {
-        if currentControlCandidate?.boardID == "ColorEasyPICO2" || preferredControlBoardID == "ColorEasyPICO2" || connectedBoardID == "ColorEasyPICO2" {
+        if isRP2350BoardID(currentControlCandidate?.boardID) || isRP2350BoardID(preferredControlBoardID) || isRP2350BoardID(connectedBoardID) {
             let mode = (status?.rp2350?.state ?? status?.usb?.mode ?? "absent").lowercased()
             if mode == "bootsel" || mode == "rp2350-bootsel" {
                 return "BOOTSEL USB"
@@ -6439,7 +7086,10 @@ final class ToolkitViewModel: ObservableObject {
             if mode == "runtime-resettable" || mode == "rp2350-runtime" || isRP2350SingleUSBMode(mode) {
                 return "RP2350 单 USB"
             }
-            return "RP2350 单 USB"
+            if mode == "not-found" || mode == "absent" || mode.isEmpty {
+                return "等待连接"
+            }
+            return "等待连接"
         }
         if let transport = status?.device?.transport_name, !transport.isEmpty {
             return transport
@@ -6465,7 +7115,7 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     var deviceReachabilityText: String {
-        if currentControlCandidate?.boardID == "ColorEasyPICO2" || preferredControlBoardID == "ColorEasyPICO2" || connectedBoardID == "ColorEasyPICO2" {
+        if isRP2350BoardID(currentControlCandidate?.boardID) || isRP2350BoardID(preferredControlBoardID) || isRP2350BoardID(connectedBoardID) {
             let rpState = (status?.rp2350?.state ?? status?.usb?.mode ?? "not-found").lowercased()
             if rpState == "bootsel" || rpState == "rp2350-bootsel" {
                 return "BOOTSEL 已就绪"
@@ -6580,7 +7230,7 @@ final class ToolkitViewModel: ObservableObject {
         if !localAgentRunning {
             return .orange
         }
-        if status?.device?.board_id == "ColorEasyPICO2" {
+        if isRP2350BoardID(status?.device?.board_id) {
             let rpState = (status?.rp2350?.state ?? "").lowercased()
             if rpState == "runtime-resettable" {
                 return .green
@@ -6871,6 +7521,36 @@ struct OverviewTab: View {
     ]
     private let actionColumns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
 
+    private var taishanConnected: Bool {
+        vm.activeControlDeviceCandidates.contains {
+            (vm.supportedBoard(for: $0.boardID)?.id ?? $0.boardID) == "TaishanPi"
+        }
+    }
+
+    private var taishanUSBModeText: String {
+        taishanConnected ? (vm.status?.usb?.mode ?? "-") : "等待连接"
+    }
+
+    private var taishanUSBProductText: String {
+        taishanConnected ? (vm.status?.usb?.product ?? "-") : "-"
+    }
+
+    private var taishanUSBNetReady: Bool {
+        taishanConnected && vm.status?.usbnet?.configured == true
+    }
+
+    private var taishanBoardOnline: Bool {
+        taishanConnected && vm.status?.board?.ping == true
+    }
+
+    private var taishanSSHReady: Bool {
+        taishanConnected && vm.status?.board?.ssh_port_open == true
+    }
+
+    private var taishanControlReady: Bool {
+        taishanConnected && vm.status?.board?.control_service == true
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             let checkHostState = vm.actionAvailabilityState(for: .checkHost)
@@ -6898,28 +7578,28 @@ struct OverviewTab: View {
             }
 
             LazyVGrid(columns: statusColumns, spacing: 6) {
-                StatusCard(title: "USB 模式", value: vm.status?.usb?.mode ?? "-", ok: (vm.status?.usb?.mode ?? "") != "absent", symbol: "cable.connector")
-                StatusCard(title: "USB 设备", value: vm.status?.usb?.product ?? "-", ok: true, symbol: "externaldrive")
-                StatusCard(title: "主机网口", value: vm.status?.usbnet?.iface ?? "-", ok: vm.status?.usbnet?.configured == true, symbol: "network")
+                StatusCard(title: "USB 模式", value: taishanUSBModeText, ok: taishanConnected, symbol: "cable.connector")
+                StatusCard(title: "USB 设备", value: taishanUSBProductText, ok: taishanConnected, symbol: "externaldrive")
+                StatusCard(title: "主机网口", value: taishanConnected ? (vm.status?.usbnet?.iface ?? "-") : "-", ok: taishanUSBNetReady, symbol: "network")
                 StatusCard(
                     title: "设备 IP",
-                    value: vm.status?.usbnet?.board_ip ?? "-",
-                    ok: vm.status?.usbnet?.configured == true,
+                    value: taishanConnected ? (vm.status?.usbnet?.board_ip ?? "-") : "-",
+                    ok: taishanUSBNetReady,
                     symbol: "point.3.connected.trianglepath.dotted",
                     helpText: "点击复制开发板 IP 地址",
-                    onTap: vm.status?.usbnet?.configured == true ? { vm.copyDeviceIPAddress() } : nil,
+                    onTap: taishanUSBNetReady ? { vm.copyDeviceIPAddress() } : nil,
                     tapFeedback: "已复制"
                 )
-                StatusCard(title: "板卡 Ping", value: vm.status?.board?.ping == true ? "在线" : "离线", ok: vm.status?.board?.ping == true, symbol: "dot.radiowaves.left.and.right")
+                StatusCard(title: "板卡 Ping", value: taishanBoardOnline ? "在线" : "离线", ok: taishanBoardOnline, symbol: "dot.radiowaves.left.and.right")
                 StatusCard(
                     title: "SSH",
-                    value: vm.status?.board?.ssh_port_open == true ? "可连接" : "未连接",
-                    ok: vm.status?.board?.ssh_port_open == true,
+                    value: taishanSSHReady ? "可连接" : "未连接",
+                    ok: taishanSSHReady,
                     symbol: "terminal",
-                    helpText: vm.status?.board?.ssh_port_open == true ? "点击打开终端连接" : "当前 SSH 尚未恢复",
-                    onTap: vm.status?.board?.ssh_port_open == true ? { vm.promptOpenSSHTerminal() } : nil
+                    helpText: taishanSSHReady ? "点击打开终端连接" : "当前 SSH 尚未恢复",
+                    onTap: taishanSSHReady ? { vm.promptOpenSSHTerminal() } : nil
                 )
-                StatusCard(title: "控制服务", value: vm.status?.board?.control_service == true ? "正常" : "未响应", ok: vm.status?.board?.control_service == true, symbol: "switch.2")
+                StatusCard(title: "控制服务", value: taishanControlReady ? "正常" : "未响应", ok: taishanControlReady, symbol: "switch.2")
                 StatusCard(title: "Docker", value: vm.status?.host?.docker_daemon == true ? "已就绪" : "未启动", ok: vm.status?.host?.docker_daemon == true, symbol: "shippingbox")
             }
 
@@ -7054,6 +7734,7 @@ struct FlashTab: View {
 
 struct ColorEasyPICO2OverviewTab: View {
     @ObservedObject var vm: ToolkitViewModel
+    let board: SupportedBoard
     private let statusColumns = [
         GridItem(.flexible(), spacing: 6),
         GridItem(.flexible(), spacing: 6),
@@ -7062,43 +7743,26 @@ struct ColorEasyPICO2OverviewTab: View {
     ]
     private let actionColumns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
 
-    private var rpState: String {
-        let state = (vm.status?.rp2350?.state ?? vm.status?.usb?.mode ?? "not-found").lowercased()
-        switch state {
-        case "runtime-resettable", "rp2350-runtime":
-            return "运行态"
-        case "bootsel", "rp2350-bootsel":
-            return "BOOTSEL"
-        case "not-found", "absent":
-            return "未连接"
-        default:
-            return state
-        }
-    }
-
-    private var runtimePort: String {
-        vm.status?.rp2350?.runtime_port?.device ?? vm.status?.device?.interface_name ?? "-"
-    }
-
-    private var statusSummary: String {
-        vm.status?.rp2350?.summary_for_user ?? vm.status?.summary ?? "等待检测 ColorEasyPICO2 状态"
-    }
+    private var context: RP2350BoardStatusContext { vm.rp2350StatusContext(for: board) }
 
     private var bootselReady: Bool {
-        rpState == "BOOTSEL"
+        context.stateLabel == "BOOTSEL"
     }
 
     private var runtimeReady: Bool {
-        rpState == "运行态"
+        context.stateLabel == "运行态"
     }
 
     private var picoConnected: Bool {
-        bootselReady || runtimeReady || (vm.status?.rp2350?.connected == true)
+        context.connected
     }
 
     private var bootselDisabledReason: String? {
         if !vm.localAgentRunning {
             return "本地 DBT Agent 离线"
+        }
+        if vm.rp2350ModeTransitionActive {
+            return vm.rp2350ModeTransitionHint
         }
         if bootselReady {
             return "当前已经处于 BOOTSEL 状态"
@@ -7109,6 +7773,9 @@ struct ColorEasyPICO2OverviewTab: View {
     private var returnToRuntimeDisabledReason: String? {
         if !vm.localAgentRunning {
             return "本地 DBT Agent 离线"
+        }
+        if vm.rp2350ModeTransitionActive {
+            return vm.rp2350ModeTransitionHint
         }
         if bootselReady {
             return nil
@@ -7122,15 +7789,15 @@ struct ColorEasyPICO2OverviewTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             LazyVGrid(columns: statusColumns, spacing: 6) {
-                StatusCard(title: "连接方式", value: vm.deviceConnectionText, ok: picoConnected, symbol: "cable.connector")
-                StatusCard(title: "当前状态", value: rpState, ok: picoConnected, symbol: "dot.radiowaves.left.and.right")
-                StatusCard(title: "串口设备", value: runtimePort, ok: runtimeReady, symbol: "terminal")
+                StatusCard(title: "连接方式", value: context.connectionLabel, ok: picoConnected, symbol: "cable.connector")
+                StatusCard(title: "当前状态", value: context.stateLabel, ok: picoConnected, symbol: "dot.radiowaves.left.and.right")
+                StatusCard(title: "串口设备", value: context.runtimePort, ok: runtimeReady, symbol: "terminal")
                 StatusCard(title: "DBT Agent", value: vm.localAgentRunning ? "在线" : "离线", ok: vm.localAgentRunning, symbol: "switch.2")
             }
 
             GroupBox("单 USB 状态") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(statusSummary)
+                    Text(context.summary)
                         .font(.system(.subheadline, design: .rounded))
                     if let serial = vm.status?.rp2350?.runtime_port?.serial_number, !serial.isEmpty {
                         Text("串口序列号：\(serial)")
@@ -7159,6 +7826,7 @@ struct ColorEasyPICO2OverviewTab: View {
 
 struct ColorEasyPICO2FirmwareTab: View {
     @ObservedObject var vm: ToolkitViewModel
+    let board: SupportedBoard
 
     private var initialProgramMissingReason: String? {
         if !vm.localAgentRunning {
@@ -7189,7 +7857,7 @@ struct ColorEasyPICO2FirmwareTab: View {
                     Text("后续通过问答生成的功能，会以这套初始程序能力为基础进行自动编译、部署和调试。")
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
-                    ActionTile(title: "刷写初始程序", subtitle: "刷入默认 UF2，恢复当前自动控制和调试基础能力", enabled: initialProgramMissingReason == nil, disabledReason: initialProgramMissingReason, helpText: initialProgramHelpText, symbol: "arrow.down.doc") { vm.rp2350FlashUF2() }
+                    ActionTile(title: "刷写初始程序", subtitle: "刷入 \(board.displayName) 默认 UF2，恢复当前自动控制和调试基础能力", enabled: initialProgramMissingReason == nil, disabledReason: initialProgramMissingReason, helpText: initialProgramHelpText, symbol: "arrow.down.doc") { vm.rp2350FlashUF2() }
                 }
                 .padding(.top, 8)
             }
@@ -8830,6 +9498,14 @@ struct ActivityTab: View {
                     }
                     .buttonStyle(.plain)
                     Spacer()
+                    Button {
+                        let text = entry.detail ?? entry.message
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text, forType: .string)
+                    } label: {
+                        Label("复制全部", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.plain)
                     Text(entry.timestamp.formatted(date: .omitted, time: .standard))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -8840,12 +9516,8 @@ struct ActivityTab: View {
                         .foregroundStyle(entry.level.color)
                     Text(entry.message)
                         .font(.subheadline)
-                    ScrollView {
-                        Text(entry.detail ?? entry.message)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    SelectableDetailTextView(text: entry.detail ?? entry.message)
+                        .frame(minHeight: 220)
                     .padding(10)
                     .background(Color(nsColor: .controlBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -8865,6 +9537,47 @@ struct ActivityTab: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+struct SelectableDetailTextView: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.autohidesScrollers = true
+
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.drawsBackground = false
+        textView.usesFindBar = true
+        textView.allowsUndo = false
+        textView.textContainerInset = NSSize(width: 4, height: 6)
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        textView.string = text
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? NSTextView else { return }
+        if textView.string != text {
+            textView.string = text
+        }
+        textView.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
     }
 }
 
@@ -8987,6 +9700,15 @@ private func boardModelOBJURL(for board: SupportedBoard) -> URL? {
         return preview
     }
     return contents.first(where: { $0.pathExtension.lowercased() == "obj" })
+}
+
+private func boardPreviewImageURL(for board: SupportedBoard) -> URL? {
+    switch board.id {
+    case "Pico2W":
+        return Bundle.main.url(forResource: "Pico2WPreview", withExtension: "png")
+    default:
+        return nil
+    }
 }
 
 private struct BoardModelPresentationProfile {
@@ -9407,25 +10129,54 @@ struct BoardModelPreviewCard: View {
         boardModelOBJURL(for: board) != nil
     }
 
+    private var previewImage: NSImage? {
+        guard let imageURL = boardPreviewImageURL(for: board) else {
+            return nil
+        }
+        return NSImage(contentsOf: imageURL)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
-                BoardModelSceneContainer(board: board, allowsZoom: false, doubleClickAction: doubleClickAction)
-                    .frame(width: presentationProfile.previewSize, height: presentationProfile.previewSize)
-                    .background(
-                        LinearGradient(
-                            colors: presentationProfile.previewBackground,
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                    )
+                Group {
+                    if let previewImage {
+                        Image(nsImage: previewImage)
+                            .resizable()
+                            .scaledToFit()
+                            .padding(16)
+                            .frame(width: presentationProfile.previewSize, height: presentationProfile.previewSize)
+                            .background(
+                                LinearGradient(
+                                    colors: presentationProfile.previewBackground,
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                    } else {
+                        BoardModelSceneContainer(board: board, allowsZoom: false, doubleClickAction: doubleClickAction)
+                            .frame(width: presentationProfile.previewSize, height: presentationProfile.previewSize)
+                            .background(
+                                LinearGradient(
+                                    colors: presentationProfile.previewBackground,
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                    }
+                }
 
-                Text("拖动旋转，双击可弹出独立窗口查看。")
+                Text(previewImage == nil ? "拖动旋转，双击可弹出独立窗口查看。" : "当前展示产品图片，等待后续 3D 模型资源。")
                     .font(.system(.caption, design: .rounded))
                     .foregroundStyle(.secondary)
             }
@@ -9435,9 +10186,14 @@ struct BoardModelPreviewCard: View {
                     .font(.system(.headline, design: .rounded).weight(.semibold))
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Label(hasModel ? "模型已加载，可围绕板子中心旋转查看。" : "当前使用占位模型，等待真实 3D 资源。", systemImage: hasModel ? "cube.transparent.fill" : "shippingbox.fill")
-                    Label("嵌入视图固定比例显示，双击后可在大图窗口中缩放。", systemImage: "plus.magnifyingglass")
-                    Label("背景和灯光已压低曝光，板卡轮廓会更稳定。", systemImage: "circle.lefthalf.filled")
+                    if previewImage != nil {
+                        Label("当前展示产品图片，后续补齐 3D 模型后会自动切回模型预览。", systemImage: "photo")
+                        Label("当前图片用于确认外观与版型，不提供旋转和缩放交互。", systemImage: "rectangle.inset.filled")
+                    } else {
+                        Label(hasModel ? "模型已加载，可围绕板子中心旋转查看。" : "当前使用占位模型，等待真实 3D 资源。", systemImage: hasModel ? "cube.transparent.fill" : "shippingbox.fill")
+                        Label("嵌入视图固定比例显示，双击后可在大图窗口中缩放。", systemImage: "plus.magnifyingglass")
+                        Label("背景和灯光已压低曝光，板卡轮廓会更稳定。", systemImage: "circle.lefthalf.filled")
+                    }
                 }
                 .font(.system(.subheadline, design: .rounded))
                 .foregroundStyle(.secondary)
@@ -9711,6 +10467,7 @@ struct SupportedBoardRowView: View {
     let selected: Bool
     let remoteVersion: String
     let installedVersion: String?
+    let removable: Bool
     let operation: BoardPluginOperationState
     let action: () -> Void
     let detailAction: () -> Void
@@ -9739,9 +10496,13 @@ struct SupportedBoardRowView: View {
                 if installedVersion == nil {
                     Button("安装插件", action: action)
                         .buttonStyle(.borderedProminent)
-                } else {
+                } else if removable {
                     Button("删除插件", action: action)
                         .buttonStyle(.bordered)
+                } else {
+                    Button("内置插件") {}
+                        .buttonStyle(.bordered)
+                        .disabled(true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -9913,7 +10674,7 @@ struct SupportedBoardDetailView: View {
 
     private var integrationLabel: String {
         switch board.id {
-        case "ColorEasyPICO2":
+        case let value where isRP2350BoardID(value):
             return board.integrationReady ? "单 USB 已验证" : "单 USB 验证中"
         default:
             return board.integrationReady ? "已接入控制链路" : "规划接入中"
@@ -9922,7 +10683,7 @@ struct SupportedBoardDetailView: View {
 
     private var integrationDetailText: String {
         switch board.id {
-        case "ColorEasyPICO2":
+        case let value where isRP2350BoardID(value):
             return board.integrationReady ? "UF2 刷入与串口调试已按单 USB 流程验证" : "等待单 USB 流程验证完成"
         default:
             return board.integrationReady ? "控制能力已可用" : "等待后续接入"
@@ -9931,7 +10692,7 @@ struct SupportedBoardDetailView: View {
 
     private var availableSections: [SupportedBoardDetailSection] {
         var sections: [SupportedBoardDetailSection] = [.overview, .summary, .capabilities, .variants]
-        if installedVersion != nil, board.id != "ColorEasyPICO2" {
+        if installedVersion != nil, !isRP2350BoardID(board.id) {
             sections.append(.developmentEnvironment)
         }
         return sections
@@ -9943,6 +10704,8 @@ struct SupportedBoardDetailView: View {
             return "泰山派（1M-RK3566）核心参数"
         case "ColorEasyPICO2":
             return "ColorEasyPICO2（RP2350A 单 USB）核心参数"
+        case "Pico2W":
+            return "Pico 2 W（RP2350 / Wi‑Fi）核心参数"
         default:
             return board.shortSummary
         }
@@ -9968,6 +10731,14 @@ struct SupportedBoardDetailView: View {
                 "刷写路径：UF2 存储盘",
                 "调试方式：USB 串口",
                 "设备展示：UF2 刷入和串口共用同一条 USB 连接",
+            ]
+        case "Pico2W":
+            return [
+                "主控芯片：RP2350",
+                "无线模块：Wi‑Fi",
+                "连接方式：单 USB",
+                "刷写路径：UF2 存储盘",
+                "调试方式：USB 串口",
             ]
         default:
             return [
@@ -10214,6 +10985,7 @@ struct SupportedBoardDetailView: View {
         switch section {
         case .overview:
             HStack(alignment: .top, spacing: 18) {
+                let previewImage = boardPreviewImageURL(for: board).flatMap(NSImage.init(contentsOf:))
                 VStack(alignment: .leading, spacing: 8) {
                     ZStack {
                         LinearGradient(
@@ -10222,20 +10994,31 @@ struct SupportedBoardDetailView: View {
                             endPoint: .bottomTrailing
                         )
 
-                        BoardModelSceneContainer(
-                            board: board,
-                            allowsZoom: false,
-                            doubleClickAction: {
-                                showDetachedModel(board)
-                            },
-                            onSceneReady: {
-                                overviewModelReady = true
-                            }
-                        )
-                        .frame(width: boardModelPresentationProfile(for: board).previewSize, height: boardModelPresentationProfile(for: board).previewSize)
-                        .opacity(overviewModelReady ? 1 : 0.001)
+                        if let previewImage {
+                            Image(nsImage: previewImage)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(
+                                    width: boardModelPresentationProfile(for: board).previewSize,
+                                    height: boardModelPresentationProfile(for: board).previewSize
+                                )
+                                .padding(18)
+                        } else {
+                            BoardModelSceneContainer(
+                                board: board,
+                                allowsZoom: false,
+                                doubleClickAction: {
+                                    showDetachedModel(board)
+                                },
+                                onSceneReady: {
+                                    overviewModelReady = true
+                                }
+                            )
+                            .frame(width: boardModelPresentationProfile(for: board).previewSize, height: boardModelPresentationProfile(for: board).previewSize)
+                            .opacity(overviewModelReady ? 1 : 0.001)
+                        }
 
-                        if !overviewModelReady {
+                        if previewImage == nil && !overviewModelReady {
                             VStack(spacing: 10) {
                                 ProgressView()
                                     .controlSize(.regular)
@@ -10255,7 +11038,7 @@ struct SupportedBoardDetailView: View {
                             .stroke(Color.white.opacity(0.12), lineWidth: 1)
                     )
 
-                    Text("拖动旋转，双击可打开独立 3D 查看窗口。")
+                    Text(previewImage == nil ? "拖动旋转，双击可打开独立 3D 查看窗口。" : "当前展示产品图片，后续接入 3D 模型后会自动替换。")
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
@@ -10317,7 +11100,7 @@ struct SupportedBoardDetailView: View {
 
         case .capabilities:
             VStack(alignment: .leading, spacing: 12) {
-                Text(board.id == "ColorEasyPICO2"
+                Text(isRP2350BoardID(board.id)
                      ? "当前开发板已验证的能力模块如下。单 USB 连接同时承载 UF2 刷入和串口调试。"
                      : "当前开发板计划复用或已接入的能力模块如下。后续增加新板卡时，优先按这些模块进行组合。")
                     .font(.system(.subheadline, design: .rounded))
@@ -10334,7 +11117,7 @@ struct SupportedBoardDetailView: View {
 
         case .variants:
             VStack(alignment: .leading, spacing: 12) {
-                Text(board.id == "ColorEasyPICO2"
+                Text(isRP2350BoardID(board.id)
                      ? "该开发板当前以 RP2350 单 USB 流程展示，后续识别和动作分发会继续按具体板型细分。"
                      : "该开发板系列当前覆盖的板型如下，后续识别和动作分发会按具体板型继续细分。")
                     .font(.system(.subheadline, design: .rounded))
@@ -10437,6 +11220,65 @@ struct DetectedDeviceSelectionOverlay: View {
                         Spacer()
                         Button("连接此设备") {
                             chooseAction(candidate)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .padding(12)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+            }
+        }
+        .padding(18)
+        .frame(width: 560)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.18), radius: 24, x: 0, y: 12)
+    }
+}
+
+struct RP2350FlashTargetOverlay: View {
+    @ObservedObject var vm: ToolkitViewModel
+    let prompt: RP2350FlashTargetPrompt
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("选择要刷写的设备")
+                        .font(.system(.title3, design: .rounded).weight(.bold))
+                    Text("当前将刷写 \(prompt.boardDisplayName) 的初始程序。请选择本次要写入的物理设备。")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("取消") {
+                    vm.dismissRP2350FlashTargetPrompt()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            VStack(spacing: 10) {
+                ForEach(prompt.candidates) { candidate in
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(vm.activeControlDisplayLabel(for: candidate))
+                                .font(.system(.headline, design: .rounded).weight(.semibold))
+                            Text("\(candidate.interfaceName) · \(candidate.transportName)")
+                                .font(.system(.caption, design: .rounded))
+                                .foregroundStyle(.secondary)
+                            Text(candidate.sourceName)
+                                .font(.system(.caption2, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Button("刷写到此设备") {
+                            vm.confirmRP2350FlashTarget(candidate, prompt: prompt)
                         }
                         .buttonStyle(.borderedProminent)
                     }
@@ -10595,6 +11437,7 @@ struct DisconnectedBoardHubView: View {
                                             selected: selectedBoardID == board.id,
                                             remoteVersion: vm.boardPluginDisplayVersion(board.id),
                                             installedVersion: vm.boardPluginInstalledVersion(board.id),
+                                            removable: vm.canRemoveBoardPlugin(board.id),
                                             operation: vm.boardPluginOperation(for: board.id),
                                             action: { vm.installOrRemoveBoardPlugin(board) },
                                             detailAction: {
@@ -10664,9 +11507,9 @@ struct ConnectedBoardPlaceholderView: View {
                     showDetachedModel(board)
                 })
 
-                GroupBox(board.id == "ColorEasyPICO2" ? "单 USB 连接" : "当前连接") {
+                GroupBox(isRP2350BoardID(board.id) ? "单 USB 连接" : "当前连接") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Label(vm.detectedHardwareDisplayName ?? board.displayName, systemImage: "cpu.fill")
+                        Label(vm.controlPageBoardTitle, systemImage: "cpu.fill")
                             .font(.system(.headline, design: .rounded).weight(.semibold))
                         Text("\(vm.deviceConnectionText) · \(vm.deviceReachabilityText)")
                             .font(.system(.subheadline, design: .rounded))
@@ -10674,7 +11517,7 @@ struct ConnectedBoardPlaceholderView: View {
                     }
                     .padding(.top, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    if board.id == "ColorEasyPICO2" {
+                    if isRP2350BoardID(board.id) {
                         Text("UF2 刷入与串口调试共用同一条 USB 连接。")
                             .font(.system(.caption, design: .rounded))
                             .foregroundStyle(.secondary)
@@ -10719,7 +11562,7 @@ struct ConnectedBoardDashboardView: View {
     @State private var hoveredDeviceCandidateID: String?
 
     private var supportsWorkspaceModeToggle: Bool {
-        vm.detectedBoard?.id != "ColorEasyPICO2"
+        !isRP2350BoardID(vm.detectedBoard?.id)
     }
 
     private var hoveredDeviceCandidate: DetectedBoardCandidate? {
@@ -10771,7 +11614,7 @@ struct ConnectedBoardDashboardView: View {
 
                 Spacer()
 
-                if vm.activeControlDeviceCandidates.count > 1 {
+                if !vm.activeControlDeviceCandidates.isEmpty {
                     Button {
                         hoveredDeviceCandidateID = vm.currentControlCandidate?.id
                         showingDeviceSelector.toggle()
@@ -10853,7 +11696,7 @@ struct ConnectedBoardDashboardView: View {
 
                 if let board = vm.detectedBoard {
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text(vm.currentControlCandidate?.conciseLabel ?? vm.detectedHardwareDisplayName ?? board.conciseModelLabel)
+                        Text(vm.controlPageBoardTitle)
                             .font(.system(.caption, design: .rounded).weight(.semibold))
                         Text(board.manufacturer)
                             .font(.system(.caption2, design: .rounded))
@@ -10896,7 +11739,7 @@ struct ConnectedBoardDashboardView: View {
                         } else {
                             ActivityTab(vm: vm)
                         }
-                    } else if let board = vm.detectedBoard, board.id == "ColorEasyPICO2" {
+                    } else if let board = vm.detectedBoard, isRP2350BoardID(board.id) {
                         Picker("", selection: $selectedTab) {
                             Text("总览").tag(0)
                             Text("固件").tag(1)
@@ -10905,9 +11748,9 @@ struct ConnectedBoardDashboardView: View {
                         .pickerStyle(.segmented)
 
                         if selectedTab == 0 {
-                            ColorEasyPICO2OverviewTab(vm: vm)
+                            ColorEasyPICO2OverviewTab(vm: vm, board: board)
                         } else if selectedTab == 1 {
-                            ColorEasyPICO2FirmwareTab(vm: vm)
+                            ColorEasyPICO2FirmwareTab(vm: vm, board: board)
                         } else {
                             ActivityTab(vm: vm)
                         }
@@ -11227,6 +12070,13 @@ struct ContentView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
+
+            if let prompt = vm.rp2350FlashTargetPrompt {
+                Color.black.opacity(0.18)
+                    .ignoresSafeArea()
+                RP2350FlashTargetOverlay(vm: vm, prompt: prompt)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            }
         }
         .onChange(of: vm.connectedBoardID) { _, _ in
             selectedTab = 0
@@ -11506,7 +12356,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         guard vm.localAgentRunning else {
             return .warning
         }
-        if vm.status?.device?.board_id == "ColorEasyPICO2" {
+        if isRP2350BoardID(vm.status?.device?.board_id) {
             let rpState = (vm.status?.rp2350?.state ?? vm.status?.usb?.mode ?? "absent").lowercased()
             switch rpState {
             case "runtime-resettable", "rp2350-runtime":

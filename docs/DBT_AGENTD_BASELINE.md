@@ -1,6 +1,6 @@
 # DBT Agentd Baseline
 
-This document records the current `dbt-agentd` baseline for version `1.0.4`.
+This document records the current `dbt-agentd` baseline for version `1.0.5`.
 
 ## Role
 
@@ -59,6 +59,7 @@ Current installed baseline now includes:
 - simultaneous multi-device aggregation for:
   - `TaishanPi`
   - `ColorEasyPICO2`
+  - `RaspberryPiPico2W`
 
 Current validated behavior:
 
@@ -69,7 +70,8 @@ Current validated behavior:
 - `transport_locator` remains the current connection endpoint, such as `198.19.77.1` or `/dev/cu.usbmodem112301`
 - current stable identity rule:
   - `TaishanPi`: `taishanpi::1m-rk3566::<stable_uid>`
-  - `ColorEasyPICO2`: `coloreasypico2::coloreasypico2::<usb_serial_number>`
+  - `ColorEasyPICO2`: `coloreasypico2::coloreasypico2::<hardware_uid>`
+  - `RaspberryPiPico2W`: `raspberrypipico2w::raspberrypipico2w::<hardware_uid>`
 - current networking compatibility rule:
   - legacy TaishanPi USB ECM remains accepted as `198.19.77.2 <-> 198.19.77.1`
   - new multi-board TaishanPi scheme is reserved as one `/30` per board slot
@@ -115,6 +117,8 @@ Current validated board-family environment support:
 - `ColorEasyPICO2`
   - `minimal_runtime`
   - `full_build`
+- `RaspberryPiPico2W`
+  - shares the RP2350 family environment baseline with `ColorEasyPICO2`
 
 Environment install is now treated as a host-scoped maintenance action, not a device-scoped action.
 
@@ -222,6 +226,22 @@ Compiled or published data consumed by the runtime is derived from:
 
 - `vault/published`
 - `registry/published`
+
+## RP2350 Initialization Firmware Baseline
+
+The maintained RP2350 initialization firmware source-of-truth is documented in:
+
+- [/Users/kvell/kk-project/docker-project/docker_mac_env/development-board-toolchain/docs/RP2350_INITIAL_FIRMWARE_BASELINE.md](/Users/kvell/kk-project/docker-project/docker_mac_env/development-board-toolchain/docs/RP2350_INITIAL_FIRMWARE_BASELINE.md)
+
+Current fixed source roots:
+
+- `/Users/kvell/kk-project/docker-project/RP2350/initial_firmware/ColorEasyPICO2`
+- `/Users/kvell/kk-project/docker-project/RP2350/initial_firmware/RaspberryPiPico2W`
+
+Current fixed runtime asset roots:
+
+- `/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/runtime/toolkit-runtime/assets/ColorEasyPICO2/initial.uf2`
+- `/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/runtime/toolkit-runtime/assets/RaspberryPiPico2W/initial.uf2`
 
 ## Current Board Scope
 

@@ -1,7 +1,6 @@
 {
-  "version": "1.0.2",
-  "generated_at": "2026-04-12T12:08:22Z",
-  "gui_app_bundle": "DBT-Agent-1.0.2.zip",
-  "gui_app_sha256": "cf2beb08136bda9e4f48c431f60afc7fb50dbf60e560a5b67c83696612ac7d76",
-  "gui_app_url": "https://github.com/kkwell/development-board-toolchain/releases/download/v1.0.2/DBT-Agent-1.0.2.zip"
+  "version": "1.0.5",
+  "generated_at": "2026-04-15T14:09:50Z",
+  "gui_app_bundle": "DBT-Agent-1.0.5.zip",
+  "gui_app_sha256": "ff220883d0b18a86ec7f9db7fc5f7a48c36e1679452df543baf67cc4317c79ea"
 }

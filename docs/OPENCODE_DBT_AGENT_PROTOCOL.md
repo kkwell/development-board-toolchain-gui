@@ -1,6 +1,6 @@
 # OpenCode <-> DBT Agent Protocol
 
-This document records the current OpenCode plugin contract for version `1.0.4`.
+This document records the current OpenCode plugin contract for version `1.0.5`.
 
 It is not the same as the GUI protocol. The GUI and OpenCode use the same `dbt-agentd` control plane, but they expose different user flows and different tool surfaces.
 
