@@ -4,4 +4,4 @@ dist/
 .build/
 .swiftpm/
 .module-cache/
-
+mac_app/gui/archive/
