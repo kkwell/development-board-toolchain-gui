@@ -24,6 +24,17 @@
       ],
       "download_url": "https://raw.githubusercontent.com/kkwell/development-board-toolchain/main/board_plugins/boards/ColorEasyPICO2/releases/0.0.0-dev/plugin.zip",
       "checksum_url": "https://raw.githubusercontent.com/kkwell/development-board-toolchain/main/board_plugins/boards/ColorEasyPICO2/releases/0.0.0-dev/plugin.zip.sha256"
+    },
+    {
+      "id": "RaspberryPiPico2W",
+      "version": "0.0.0-dev",
+      "display_name": "Pico 2 W",
+      "manufacturer": "Raspberry Pi",
+      "variants": [
+        "RaspberryPiPico2W"
+      ],
+      "download_url": "https://raw.githubusercontent.com/kkwell/development-board-toolchain/main/board_plugins/boards/RaspberryPiPico2W/releases/0.0.0-dev/plugin.zip",
+      "checksum_url": "https://raw.githubusercontent.com/kkwell/development-board-toolchain/main/board_plugins/boards/RaspberryPiPico2W/releases/0.0.0-dev/plugin.zip.sha256"
     }
   ]
 }

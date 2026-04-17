@@ -13,6 +13,7 @@ ICON_SOURCE="${REPO_ROOT}/assets/app-logo.png"
 INFO_LOGO_SOURCE="${REPO_ROOT}/assets/app-logo.png"
 ALIPAY_QR_SOURCE="${REPO_ROOT}/assets/zhifubao.JPG"
 WECHAT_QR_SOURCE="${REPO_ROOT}/assets/weixin.JPG"
+PICO2W_PREVIEW_SOURCE="${REPO_ROOT}/assets/Pico2WPreview.png"
 ICONSET_DIR="${BUILD_DIR}/AppIcon.iconset"
 ICON_MASTER="${BUILD_DIR}/AppIcon-master.png"
 DEFAULT_APP_VERSION="$(tr -d '\n' < "${REPO_ROOT}/VERSION" 2>/dev/null || printf '1.0.0')"
@@ -163,6 +164,11 @@ fi
 if [[ -f "${WECHAT_QR_SOURCE}" ]]; then
   echo "Copying WeChat QR"
   cp -f "${WECHAT_QR_SOURCE}" "${RES_DIR}/ContactWeChat.jpg"
+fi
+
+if [[ -f "${PICO2W_PREVIEW_SOURCE}" ]]; then
+  echo "Copying Pico 2 W preview"
+  cp -f "${PICO2W_PREVIEW_SOURCE}" "${RES_DIR}/Pico2WPreview.png"
 fi
 
 echo "Packaging app archive"

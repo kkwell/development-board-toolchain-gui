@@ -105,6 +105,34 @@ The current rule is:
 - then list summaries for that board
 - then load only the selected capability context
 
+For RP2350-family boards, the selected capability context now carries a stronger `implementation_contract` baseline.
+
+Current RP2350 capability-context rule:
+
+- `implementation_contract.build_contract` is authoritative for generated firmware shape
+- `implementation_contract.build_contract` now includes:
+  - `PICO_SDK_PATH` usage
+  - required Pico SDK headers
+  - required link libraries
+  - capability-level header/library maps through `capability_build_profiles`
+  - feature-level wireless maps through `feature_build_profiles`
+  - generated support headers such as `include/lwipopts.h` and `include/btstack_config.h` when the selected feature requires them
+  - `PICO_BOARD`
+  - required compile definitions for the DBT single-USB reset path
+  - required project layout such as `src/main.c` or `src/main.cpp`
+- `implementation_contract.runtime_protocol_requirements` now includes:
+  - `DBT_IDENTITY`
+  - `DBT_READY`
+  - the required USB stdio command loop expectations
+  - the rule that runtime protocol output must not be gated behind `stdio_usb_connected()`
+- capability-specific constraints are layered on top of the RP2350 family baseline:
+  - `onboard_led`
+  - `pio`
+  - `multicore`
+  - `wifi_bluetooth`
+
+This baseline exists so model-side firmware generation does not invent a different Pico SDK scaffold on each turn.
+
 ### Environment management
 
 `dbt-agentd` now supports:

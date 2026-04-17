@@ -6,14 +6,12 @@ Use the prompt below when handing this repository to another model for continued
 You are continuing work on the macOS GUI project in this repository.
 
 Read these files first:
+- CANONICAL_BASELINE.md
 - README.md
-- docs/PROJECT_CORE_POINTS.md
-- docs/TOOL_INTERACTION_PROTOCOL.md
-- docs/REPO_MAP.md
-- docs/GUI_BASELINE_2026-04-14.md
 
 Important rules:
 - This repository contains the GUI project only.
+- Treat `CANONICAL_BASELINE.md` as the single entry document. If another doc conflicts with it, follow `CANONICAL_BASELINE.md`.
 - Do not bundle or redesign private runtime payloads here.
 - The GUI should behave as a client of local dbt-agentd.
 - Unified board status must come from dbtctl status --json through dbt-agentd.

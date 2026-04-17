@@ -1,8 +1,10 @@
-# development-board-toolchain
+# development-board-toolchain-gui
 
 Open-source macOS GUI project for `DBT-Agent`.
 
-This repository contains the menu bar application source, the supporting Swift CLI sources it validates against during build, and GitHub Actions for build and release packaging.
+This repository is the canonical macOS GUI project for `DBT-Agent`.
+
+It contains the menu bar application source, the supporting Swift CLI sources used for GUI-side compatibility validation during build, GUI assets, packaging scripts, and long-term GUI maintenance notes.
 
 ## Demo
 
@@ -18,7 +20,7 @@ Click the preview below to open the original WebM recording.
 
 This repository builds and releases the GUI application package.
 
-Runtime, local `dbt-agentd`, board plugin content, and private product release orchestration remain outside this repository.
+For GUI maintenance, treat this repository as self-contained. External runtime components such as local `dbt-agentd`, `dbtctl`, and installed board plugins are integration targets, not source locations for this GUI project.
 
 ## Licensing
 
@@ -44,6 +46,8 @@ Use, modification, redistribution, and commercial use are allowed, provided the 
 
 ## Engineering Notes
 
+- [GUI Project Overview](docs/GUI_PROJECT_OVERVIEW.md)
+- [Canonical Baseline](CANONICAL_BASELINE.md)
 - [Project Core Points](docs/PROJECT_CORE_POINTS.md)
 - [Tool Interaction Protocol](docs/TOOL_INTERACTION_PROTOCOL.md)
 - [Repository Map](docs/REPO_MAP.md)

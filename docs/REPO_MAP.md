@@ -4,6 +4,8 @@
 
 - `README.md`
   - public project overview
+- `CANONICAL_BASELINE.md`
+  - single entry document and precedence anchor for future maintenance
 - `VERSION`
   - GUI package version used by build scripts
 - `.github/workflows`
@@ -34,6 +36,8 @@
 
 ## Docs Added For Continuation
 
+- `docs/GUI_PROJECT_OVERVIEW.md`
+- `CANONICAL_BASELINE.md`
 - `docs/PROJECT_CORE_POINTS.md`
 - `docs/TOOL_INTERACTION_PROTOCOL.md`
 - `docs/REPO_MAP.md`
@@ -47,12 +51,3 @@
 - `docs/RP2350_INITIAL_FIRMWARE_BASELINE.md`
 - `docs/boards/TaishanPi_GUI.md`
 - `docs/boards/ColorEasyPICO2_GUI.md`
-
-## External RP2350 Initial Firmware Sources
-
-- `../RP2350/initial_firmware/ColorEasyPICO2`
-  - maintained initialization firmware source for `ColorEasyPICO2`
-- `../RP2350/initial_firmware/RaspberryPiPico2W`
-  - maintained initialization firmware source for `Pico 2 W`
-- `../RP2350/initial_firmware/build_initial_firmware.sh`
-  - helper to build the maintained RP2350 initialization UF2 images

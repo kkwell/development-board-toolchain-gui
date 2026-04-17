@@ -41,6 +41,7 @@ Current validated multi-device behavior:
 
 - OpenCode status queries can now summarize more than one connected board
 - `dbt_current_board_status` returns `devices[]` and `active_device_id`
+- `dbt_current_board_status` is now the canonical connected-device list for normal queries; do not require a second list call when the status payload already answers which boards are connected
 - each connected device record now also includes:
   - `device_uid`
   - `transport_locator`
@@ -49,7 +50,52 @@ Current validated multi-device behavior:
   - `device_id` is stable
   - `transport_locator` is allowed to change
 - RP2350-specific operational tools default to the `ColorEasyPICO2` device family instead of being blocked by unrelated connected Linux boards
+- for RP2350 firmware generation, `opencode` must obey `capability_context.implementation_contract.build_contract` and `runtime_protocol_requirements` instead of inventing a fresh Pico SDK scaffold
+- when `capability_build_profiles` or `feature_build_profiles` are present, `opencode` must select from those exact header/library/include/support-header sets instead of improvising alternatives
 - mutating tools still require explicit `device_id` when more than one device matches the same board family
+
+## Stability Baseline
+
+Current validated local-model baseline:
+
+- default model:
+  - `google/gemini-2.5-flash-lite`
+- do not treat `google/gemini-2.5-flash` as the default stable model for DBT multi-tool flows on this machine
+
+Current hard rules:
+
+- `dbt_current_board_status` must return a compact model-facing payload, not the full raw runtime status blob
+- `dbt_get_board_config` must return a compact board-config contract, not raw `stdout`, `returncode`, or duplicated manifest text
+- for RP2350-family boards, `dbt_get_board_config` must surface the actual installed build roots:
+  - `runtime_root`
+  - `sdk_core_root`
+  - `build_overlay_root`
+  - `pico_sdk_path`
+  - `picotool_path`
+  - `pioasm_path`
+  - `arm_none_eabi_gcc`
+- `dbt_get_capability_context` must return the minimal generation contract only:
+  - required headers
+  - include directories
+  - link libraries
+  - support headers
+  - selected capability profile
+- `experimental.chat.messages.transform` must not prepend large few-shot transcripts or demo conversations
+- `dbt-agentd /v1/agent/resolve-scope` must not emit:
+  - `should_stop = false`
+  - `recommended_tools = []`
+  in the same response
+- if scope resolution succeeds but no narrower tool survives board-boundary filtering, the fallback recommended tool must be:
+  - `dbt_list_capability_summaries`
+  or, if unavailable:
+  - `dbt_get_capability_context`
+  or, if no capability path is possible:
+  - `dbt_status`
+
+Reason:
+
+- OpenCode previously produced incomplete turns because the model was told to continue after `dbt_prepare_request`, but the control plane sometimes returned an empty `recommended_tools` list
+- that empty-next-step state led to real empty-stop or incomplete tool-loop behavior during validation
 
 ## Default Tooling Strategy
 
@@ -67,6 +113,7 @@ Current core tool groups:
 ### Capability / board context
 
 - `dbt_get_board_config`
+- `dbt_get_board_capabilities`
 - `dbt_get_capability_context`
 
 ### TaishanPi runtime
@@ -113,12 +160,30 @@ For board-scoped design or execution requests:
 
 Do not skip directly to a guessed capability name.
 
+For direct capability-list questions such as:
+
+- 当前开发板有什么能力
+- 这个开发板支持什么功能
+- Pico 2 W 有哪些能力
+
+use this shorter path:
+
+1. call `dbt_get_board_capabilities`
+2. summarize the returned capability list
+
+Do not add a prior status call unless live execution state or connection diagnosis is part of the question.
+
 When scope resolution succeeds against a currently connected board, the response may also include:
 
 - `connected_device_id`
 - `resolved_device_id`
 
 OpenCode should preserve that identity in later mutating requests when device-targeted behavior is added on top of the current single-active-device baseline.
+
+Additional rule:
+
+- when `should_stop = false`, the plugin and control plane together must guarantee that the model sees at least one concrete next-step tool
+- a scope response that only says "continue" without a concrete tool recommendation is invalid for OpenCode
 
 Current mutating tool schemas may also accept an explicit optional:
 
@@ -129,6 +194,7 @@ This is now the active path for multi-device targeting.
 ## Scope Rules
 
 - if a board is connected, prefer that board
+- if the user asks only for current-board capabilities, use direct capability lookup instead of a status precheck
 - if no board is connected and the user explicitly names a board, allow knowledge/capability lookup for that board
 - if no board is connected and the user does not name a board, stop and ask for the board model
 - if execution requires live hardware and the board is not connected, return a clear execution-blocked error
@@ -151,7 +217,15 @@ These do not belong in the GUI protocol file.
 
 ## Update / Install Path
 
-OpenCode plugin update now uses release-manifest assets, not the old raw repository-clone path.
+OpenCode plugin update now uses the `DBT-Agent` GitHub repository raw manifest as the primary update source for:
+
+- `release-manifest.json`
+- `install-opencode-plugin.sh`
+- runtime archive
+- `dbt-agentd` archive
+- `VERSION`
+
+Large board-environment archives continue to use GitHub Release asset URLs.
 
 Primary release repo files:
 
@@ -167,6 +241,8 @@ Do not reintroduce:
 - broad tool surfaces that expose both high-level and raw low-level tools to the model
 - direct plugin calls to raw `dbtctl` for normal user flows
 - full all-board knowledge dumps into the model context
+- board-config or capability-context payloads that include large explanatory documents when only build/runtime constraints are needed
+- a `current_board_status -> list_connected_devices` double call when the status payload already contains the connected-device list
 
 ## When To Update This Document
 

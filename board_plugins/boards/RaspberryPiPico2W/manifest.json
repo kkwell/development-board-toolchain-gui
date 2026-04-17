@@ -1,0 +1,16 @@
+{
+  "id": "RaspberryPiPico2W",
+  "version": "0.0.0-dev",
+  "display_name": "Pico 2 W",
+  "manufacturer": "Raspberry Pi",
+  "variants": [
+    "RaspberryPiPico2W"
+  ],
+  "capabilities": [
+    "usbProbe",
+    "uf2MassStorage",
+    "uf2Deploy",
+    "serialConsole"
+  ],
+  "profile_path": "profile.json"
+}

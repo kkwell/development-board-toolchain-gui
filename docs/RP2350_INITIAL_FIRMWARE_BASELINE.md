@@ -61,7 +61,7 @@ Default toolchain rule:
 - first choice:
   - `/Users/kvell/kk-project/docker-project/RP2350/toolchains/arm-gnu-toolchain-15.2.rel1-darwin-arm64-arm-none-eabi`
 - fallback:
-  - `/Users/kvell/Library/Application Support/development-board-toolchain/board-environments/ColorEasyPICO2/full_build/RP2350/toolchains/arm-gnu-toolchain-15.2.rel1-darwin-arm64-arm-none-eabi`
+  - `/Users/kvell/Library/Application Support/development-board-toolchain/board-environments/RP2350SDKCore/sdk_core/RP2350/toolchains/arm-gnu-toolchain-15.2.rel1-darwin-arm64-arm-none-eabi`
 
 The build helper now auto-selects one of these roots and prepends its `bin` directory to `PATH`.
 

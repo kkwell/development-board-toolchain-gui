@@ -213,9 +213,9 @@ struct SupportedBoard: Identifiable {
         modelDirectoryName: nil,
         variantDisplayNames: ["Pico 2 W"],
         shortSummary: "Raspberry Pi Pico 2 W，基于 RP2350 并带有 Wi‑Fi 模块，适合后续扩展无线联网控制场景。",
-        detailSummary: "Pico 2 W 作为 Pico 2 系列的 Wi‑Fi 型号，保留 RP2350 的 UF2/串口开发方式，并额外提供无线联网扩展空间。当前 GUI 已纳入目录与产品资料展示，后续按底层工具协议补齐具体能力。",
-        integrationStatus: "目录和产品资料已接入，等待插件与底层工具能力落地。",
-        integrationReady: false,
+        detailSummary: "Pico 2 W 作为 Pico 2 系列的 Wi‑Fi 型号，当前 GUI 已按 RP2350 单 USB 流程接入总览、固件和状态页面，并额外保留无线扩展说明。底层能力仍统一走 RP2350 家族协议。",
+        integrationStatus: "RP2350 单 USB 流程已接入，当前作为 Raspberry Pi Pico 2 W 型号展示和控制。",
+        integrationReady: true,
         thumbnailLabel: "PICO 2 W",
         thumbnailSymbol: "dot.radiowaves.left.and.right",
         accentStart: Color(red: 0.31, green: 0.46, blue: 0.96),
@@ -5059,21 +5059,20 @@ final class ToolkitViewModel: ObservableObject {
         if isFlashTaskRunning {
             return
         }
-        let liveBoardID = currentLiveCandidate?.boardID ?? status?.device?.board_id
-        let liveBoardIsRP2350 = isRP2350BoardID(liveBoardID)
         if reason == "usb-removed" {
             lastLocalUSBRemovedAt = Date()
             boardStateGraceUntil = nil
             stopBoardMonitoring()
             resetAutomaticUSBNetRepairState(cancelTask: true)
-            if !liveBoardIsRP2350 && onlineConnectedDeviceCount <= 1 {
+            if onlineConnectedDeviceCount <= 1 {
                 suppressConnectedAgentStatusUntil = Date().addingTimeInterval(4.5)
                 applyDisconnectedUSBState()
             }
         } else if reason == "usb-added" {
             lastLocalUSBRemovedAt = nil
             suppressConnectedAgentStatusUntil = nil
-            if liveBoardIsRP2350 {
+            let liveBoardID = currentLiveCandidate?.boardID ?? status?.device?.board_id
+            if isRP2350BoardID(liveBoardID) {
                 boardStateGraceUntil = nil
             } else {
                 boardStateGraceUntil = Date().addingTimeInterval(8)
@@ -6751,7 +6750,7 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     var currentLiveCandidate: DetectedBoardCandidate? {
-        let candidates = stableConnectedDeviceCandidates.isEmpty ? detectedBoardCandidates : stableConnectedDeviceCandidates
+        let candidates = stableConnectedDeviceCandidates
         if let preferredControlDeviceID,
            let candidate = candidates.first(where: { $0.deviceID == preferredControlDeviceID })
         {
@@ -6781,8 +6780,26 @@ final class ToolkitViewModel: ObservableObject {
         preferredControlBoard
     }
 
+    var currentControllableLiveCandidate: DetectedBoardCandidate? {
+        guard let candidate = currentLiveCandidate,
+              isBoardPluginInstalled(candidate.boardID) else {
+            return nil
+        }
+        return candidate
+    }
+
+    var catalogHeroControlBoard: SupportedBoard? {
+        if let preferredControlBoard {
+            return preferredControlBoard
+        }
+        guard let candidate = currentControllableLiveCandidate else {
+            return nil
+        }
+        return supportedBoard(for: candidate.boardID)
+    }
+
     var currentControlCandidate: DetectedBoardCandidate? {
-        let candidates = stableConnectedDeviceCandidates.isEmpty ? detectedBoardCandidates : stableConnectedDeviceCandidates
+        let candidates = stableConnectedDeviceCandidates
         if let preferredControlDeviceID,
            let candidate = candidates.first(where: { $0.deviceID == preferredControlDeviceID }) {
             return candidate
@@ -6802,10 +6819,7 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     var activeControlDeviceCandidates: [DetectedBoardCandidate] {
-        if !stableConnectedDeviceCandidates.isEmpty {
-            return stableConnectedDeviceCandidates
-        }
-        return detectedBoardCandidates.filter { $0.deviceID != nil }
+        stableConnectedDeviceCandidates
     }
 
     var onlineConnectedDeviceCount: Int {
@@ -6824,7 +6838,7 @@ final class ToolkitViewModel: ObservableObject {
                 return ids.count
             }
         }
-        return activeControlDeviceCandidates.count
+        return 0
     }
 
     var activeControlDeviceMenuLabel: String {
@@ -7028,18 +7042,24 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     var heroActionAvailable: Bool {
-        if !isShowingBoardCatalog {
-            return true
+        if isShowingBoardCatalog {
+            return catalogHeroControlBoard != nil
         }
-        return heroTargetBoard != nil
+        return true
     }
 
     var heroActionHint: String {
+        if isShowingBoardCatalog {
+            if preferredControlBoard != nil {
+                return "点击进入当前控制页面"
+            }
+            if currentControllableLiveCandidate != nil {
+                return "点击进入当前在线设备控制页面"
+            }
+            return ""
+        }
         if !isShowingBoardCatalog {
             return "点击返回初始化列表"
-        }
-        if heroTargetBoard != nil {
-            return "点击切换到设备控制页面"
         }
         return ""
     }
@@ -7052,10 +7072,10 @@ final class ToolkitViewModel: ObservableObject {
             let current = currentControlCandidate?.conciseLabel ?? detectedHardwareDisplayName ?? "当前设备"
             return "当前 \(onlineConnectedDeviceCount) 台 · 当前激活设备：\(current)"
         }
-        if onlineConnectedDeviceCount > 0, let liveBoard = liveDetectedBoard {
+        if onlineConnectedDeviceCount > 0, let liveCandidate = currentLiveCandidate {
             let prefix = "当前 \(onlineConnectedDeviceCount) 台 · "
-            let liveLabel = detectedHardwareDisplayName ?? liveBoard.conciseModelLabel
-            return "\(prefix)当前在线：\(liveLabel) · \(liveBoard.manufacturer)"
+            let liveLabel = stableBoardDisplayName(for: liveCandidate.boardID, variantID: liveCandidate.variantID) ?? liveCandidate.conciseLabel
+            return "\(prefix)当前在线：\(liveLabel) · \(liveCandidate.manufacturer)"
         }
         if let board = heroTargetBoard, preferredControlBoardID != nil || connectedBoardID != nil {
             let prefix = onlineConnectedDeviceCount > 0 ? "当前 \(onlineConnectedDeviceCount) 台 · " : ""
@@ -10668,6 +10688,7 @@ struct SupportedBoardDetailView: View {
     @State private var revealAllNavButtons = false
     @State private var hoveredSection: SupportedBoardDetailSection?
     @State private var overviewModelReady = false
+    @State private var capabilityTagsVisible = false
     @State private var lastSectionSwitchTime: CFAbsoluteTime = 0
     @State private var sectionTransitionDirection = 1
     private let capabilityColumns = [GridItem(.adaptive(minimum: 116), spacing: 8)]
@@ -10675,7 +10696,7 @@ struct SupportedBoardDetailView: View {
     private var integrationLabel: String {
         switch board.id {
         case let value where isRP2350BoardID(value):
-            return board.integrationReady ? "单 USB 已验证" : "单 USB 验证中"
+            return "单 USB 已接入"
         default:
             return board.integrationReady ? "已接入控制链路" : "规划接入中"
         }
@@ -10684,7 +10705,7 @@ struct SupportedBoardDetailView: View {
     private var integrationDetailText: String {
         switch board.id {
         case let value where isRP2350BoardID(value):
-            return board.integrationReady ? "UF2 刷入与串口调试已按单 USB 流程验证" : "等待单 USB 流程验证完成"
+            return "UF2 刷入与串口调试已按单 USB 流程接入"
         default:
             return board.integrationReady ? "控制能力已可用" : "等待后续接入"
         }
@@ -10826,6 +10847,26 @@ struct SupportedBoardDetailView: View {
         overviewModelReady = BoardSceneRepository.shared.cachedScene(for: board.id) != nil
     }
 
+    private func refreshCapabilityTagAnimation(animated: Bool = true) {
+        capabilityTagsVisible = false
+        let applyVisible = {
+            if animated {
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                    capabilityTagsVisible = true
+                }
+            } else {
+                capabilityTagsVisible = true
+            }
+        }
+        if animated {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+                applyVisible()
+            }
+        } else {
+            applyVisible()
+        }
+    }
+
     private func syncOuterHeroVisibility() {
         hideOuterHero.wrappedValue = selectedSection == .developmentEnvironment
     }
@@ -10858,12 +10899,14 @@ struct SupportedBoardDetailView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    VStack(alignment: .leading, spacing: 0) {
-                        Toggle("当前控制页", isOn: currentControlBoardSelection)
-                        .toggleStyle(.checkbox)
-                        .help("勾选表示当前设备控制页面关联的是这块开发板。")
+                    if installedVersion != nil {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Toggle("当前控制页", isOn: currentControlBoardSelection)
+                            .toggleStyle(.checkbox)
+                            .help("勾选表示当前设备控制页面关联的是这块开发板。")
+                        }
+                        .frame(width: 102, alignment: .leading)
                     }
-                    .frame(width: 102, alignment: .leading)
 
                     Spacer()
 
@@ -10954,6 +10997,11 @@ struct SupportedBoardDetailView: View {
                 selectedSection = .overview
             }
             refreshOverviewModelReady()
+            if selectedSection == .capabilities {
+                refreshCapabilityTagAnimation(animated: false)
+            } else {
+                capabilityTagsVisible = false
+            }
             syncOuterHeroVisibility()
             revealAllNavButtons = true
             selectSection(selectedSection, animated: false)
@@ -10973,6 +11021,10 @@ struct SupportedBoardDetailView: View {
             syncOuterHeroVisibility()
             if newValue == .overview {
                 refreshOverviewModelReady()
+            } else if newValue == .capabilities {
+                refreshCapabilityTagAnimation()
+            } else {
+                capabilityTagsVisible = false
             }
         }
         .onDisappear {
@@ -11108,12 +11160,20 @@ struct SupportedBoardDetailView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 LazyVGrid(columns: capabilityColumns, alignment: .leading, spacing: 10) {
-                    ForEach(board.capabilities, id: \.rawValue) { capability in
+                    ForEach(Array(board.capabilities.enumerated()), id: \.element.rawValue) { index, capability in
                         CapabilityChip(title: capability.displayName, tint: board.accentStart)
+                            .opacity(capabilityTagsVisible ? 1 : 0.001)
+                            .offset(y: capabilityTagsVisible ? 0 : 16)
+                            .animation(
+                                .spring(response: 0.32, dampingFraction: 0.82)
+                                    .delay(Double(index) * 0.035),
+                                value: capabilityTagsVisible
+                            )
                     }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
 
         case .variants:
             VStack(alignment: .leading, spacing: 12) {
@@ -11920,13 +11980,16 @@ struct ContentView: View {
 
     var heroAction: (() -> Void)? {
         if vm.isShowingBoardCatalog {
-            guard vm.heroActionAvailable else {
+            if let board = vm.catalogHeroControlBoard {
+                return {
+                    vm.showControlPage(for: board)
+                }
+            }
+            guard let candidate = vm.currentControllableLiveCandidate else {
                 return nil
             }
             return {
-                if let board = vm.heroTargetBoard {
-                    vm.showControlPage(for: board)
-                }
+                vm.chooseDetectedBoard(candidate)
             }
         }
         return {
