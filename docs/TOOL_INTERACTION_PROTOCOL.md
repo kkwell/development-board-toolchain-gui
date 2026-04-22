@@ -18,18 +18,23 @@ This protocol is expected to evolve with the private runtime and local agent. Wh
 
 Shared local install root:
 
-- `~/Library/Application Support/development-board-toolchain`
+- `~/Library/development-board-toolchain`
 
 Important paths:
 
 - runtime command:
-  - `~/Library/Application Support/development-board-toolchain/runtime/dbtctl`
+  - `~/Library/development-board-toolchain/runtime/dbtctl`
 - local agent:
-  - `~/Library/Application Support/development-board-toolchain/agent/bin/dbt-agentd`
+  - `~/Library/development-board-toolchain/agent/bin/dbt-agentctl`
+  - `~/Library/development-board-toolchain/agent/bin/dbt-agentd`
+- canonical board-family assets:
+  - `~/Library/development-board-toolchain/families/rk356x/boards/TaishanPi/variants/1M-RK3566/images/{factory,custom}/current`
+  - `~/Library/development-board-toolchain/families/rp2350/boards/<BoardID>/assets`
 
 Installer expectation:
 
 - the full product installer must provision both `runtime/` and `agent/`
+- new GUI path resolution must prefer `families/...` and the new Library root first
 - a GUI-only archive is not sufficient to satisfy the local control-plane dependency
 
 ## Control Plane Rule

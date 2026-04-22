@@ -10,8 +10,8 @@ Codex does not get its own separate DBT runtime.
 
 GUI, OpenCode, and Codex must all use:
 
-- runtime: `~/Library/Application Support/development-board-toolchain/runtime`
-- agent: `~/Library/Application Support/development-board-toolchain/agent`
+- runtime: `~/Library/development-board-toolchain/runtime`
+- agent: `~/Library/development-board-toolchain/agent`
 
 The Codex plugin is only a thin wrapper installed into Codex’s own plugin directory.
 
@@ -21,7 +21,7 @@ The shared runtime keeps only the install assets needed for Codex:
 
 - `runtime/editor_plugins/codex/plugin/dbt-agent`
 - `runtime/editor_plugins/codex/marketplace.json`
-- `runtime/editor_plugins/codex/scripts/dbt_agent_mcp.py`
+- `runtime/editor_plugins/codex/bin/dbt-agent-mcp-bridge`
 
 Obsolete runtime path:
 
@@ -40,6 +40,7 @@ Do not use or restore it.
 
 So the installed plugin ends up at one of:
 
+- `~/.codex/plugins/dbt-agent`
 - `~/.codex/.tmp/plugins/plugins/dbt-agent`
 - `~/plugins/dbt-agent`
 
@@ -57,11 +58,11 @@ The installed Codex plugin contains:
 - `skills/`
 - plugin README/assets
 
-Its `.mcp.json` must point to the shared runtime MCP server script:
+Its `.mcp.json` must point to the shared runtime MCP bridge binary:
 
-- `~/Library/Application Support/development-board-toolchain/runtime/editor_plugins/codex/scripts/dbt_agent_mcp.py`
+- `~/Library/development-board-toolchain/runtime/editor_plugins/codex/bin/dbt-agent-mcp-bridge`
 
-It must not point to a duplicated plugin-local runtime.
+It must not point to a duplicated plugin-local runtime or a plugin-local Python entry.
 
 ## UI install flow
 

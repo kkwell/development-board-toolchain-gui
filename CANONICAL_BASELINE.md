@@ -88,7 +88,7 @@ Key facts:
 Verified build path:
 
 - generated RP2350 projects resolve `PICO_SDK_PATH` to:
-  - `~/Library/Application Support/development-board-toolchain/board-environments/RP2350SDKCore/sdk_core/RP2350/pico-sdk`
+  - `~/Library/development-board-toolchain/families/rp2350/shared/board-environments/RP2350SDKCore/sdk_core/RP2350/pico-sdk`
 
 ## RP2350 Offline Bundle Rules
 
@@ -189,9 +189,9 @@ Codex must use the same shared support-root runtime and local agent as GUI and O
 Canonical install shape:
 
 - shared runtime root:
-  - `~/Library/Application Support/development-board-toolchain/runtime`
+  - `~/Library/development-board-toolchain/runtime`
 - shared agent root:
-  - `~/Library/Application Support/development-board-toolchain/agent`
+  - `~/Library/development-board-toolchain/agent`
 - Codex plugin install target:
   - `~/.codex/.tmp/plugins/plugins/dbt-agent`
   - or `~/plugins/dbt-agent` depending on the active Codex local marketplace root

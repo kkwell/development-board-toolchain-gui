@@ -8,6 +8,56 @@ import SwiftUI
 import SystemConfiguration
 import UserNotifications
 
+private enum ToolkitChromeColors {
+    private static func dynamicColor(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let components = isDark ? dark : light
+            return NSColor(
+                calibratedRed: components.0,
+                green: components.1,
+                blue: components.2,
+                alpha: 1
+            )
+        }
+    }
+
+    static let windowBackground = dynamicColor(
+        light: (0.948, 0.955, 0.965),
+        dark: (0.102, 0.112, 0.126)
+    )
+    static let panelBackground = dynamicColor(
+        light: (0.979, 0.984, 0.990),
+        dark: (0.136, 0.147, 0.165)
+    )
+    static let inputBackground = dynamicColor(
+        light: (0.968, 0.974, 0.982),
+        dark: (0.157, 0.170, 0.190)
+    )
+    static let overlayBackground = dynamicColor(
+        light: (0.960, 0.967, 0.977),
+        dark: (0.120, 0.132, 0.150)
+    )
+}
+
+private extension Color {
+    static var toolkitWindowBackground: Color {
+        Color(nsColor: ToolkitChromeColors.windowBackground)
+    }
+
+    static var toolkitPanelBackground: Color {
+        Color(nsColor: ToolkitChromeColors.panelBackground)
+    }
+
+    static var toolkitInputBackground: Color {
+        Color(nsColor: ToolkitChromeColors.inputBackground)
+    }
+
+    static var toolkitOverlayBackground: Color {
+        Color(nsColor: ToolkitChromeColors.overlayBackground)
+    }
+}
+
 struct ToolkitStatus: Decodable {
     struct Service: Decodable {
         let host: String?
@@ -1197,12 +1247,55 @@ final class ToolkitViewModel: ObservableObject {
         requestNotificationPermission()
     }
 
-    static func sharedRuntimeRootURLStatic() -> URL {
+    nonisolated static func toolkitSupportRootCandidates() -> [URL] {
         let fileManager = FileManager.default
-        let generic = (fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("development-board-toolchain", isDirectory: true))
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/development-board-toolchain", isDirectory: true)
-        return generic.appendingPathComponent("runtime", isDirectory: true)
+        let home = fileManager.homeDirectoryForCurrentUser
+        let environment = ProcessInfo.processInfo.environment
+        var candidates: [URL] = []
+        if let override = environment["DBT_TOOLKIT_APP_SUPPORT_DIR"], !override.isEmpty {
+            candidates.append(URL(fileURLWithPath: override, isDirectory: true))
+        }
+        if let override = environment["RK356X_TOOLKIT_APP_SUPPORT_DIR"], !override.isEmpty {
+            candidates.append(URL(fileURLWithPath: override, isDirectory: true))
+        }
+        candidates.append(contentsOf: [
+            home.appendingPathComponent("Library/development-board-toolchain", isDirectory: true),
+            home.appendingPathComponent("Library/Application Support/development-board-toolchain", isDirectory: true),
+            home.appendingPathComponent("Library/Application Support/rk356x-mac-toolkit", isDirectory: true),
+        ])
+
+        var seen = Set<String>()
+        return candidates.filter {
+            let path = $0.standardizedFileURL.path
+            guard !seen.contains(path) else {
+                return false
+            }
+            seen.insert(path)
+            return true
+        }
+    }
+
+    nonisolated static func resolveToolkitSupportRoot() -> URL {
+        let fileManager = FileManager.default
+        let candidates = toolkitSupportRootCandidates()
+        return candidates.first(where: { fileManager.fileExists(atPath: $0.path) }) ?? candidates[0]
+    }
+
+    nonisolated static func sharedRuntimeRootURLStatic() -> URL {
+        resolveToolkitSupportRoot().appendingPathComponent("runtime", isDirectory: true)
+    }
+
+    func rp2350BoardAssetsRootURL(boardID: String) -> URL {
+        appSupportRootURL()
+            .appendingPathComponent("families", isDirectory: true)
+            .appendingPathComponent("rp2350", isDirectory: true)
+            .appendingPathComponent("boards", isDirectory: true)
+            .appendingPathComponent(boardID, isDirectory: true)
+            .appendingPathComponent("assets", isDirectory: true)
+    }
+
+    func legacyRuntimeAssetsRootURL() -> URL {
+        sharedRuntimeRootURL().appendingPathComponent("assets", isDirectory: true)
     }
 
     func rp2350InitialProgramURL(boardID: String? = nil) -> URL {
@@ -1219,11 +1312,13 @@ final class ToolkitViewModel: ObservableObject {
         default:
             normalizedBoardID = "ColorEasyPICO2"
         }
-        let preferredURL = sharedRuntimeRootURL().appendingPathComponent("assets/\(normalizedBoardID)/initial.uf2", isDirectory: false)
-        if FileManager.default.fileExists(atPath: preferredURL.path) {
-            return preferredURL
-        }
-        return sharedRuntimeRootURL().appendingPathComponent("assets/ColorEasyPICO2/initial.uf2", isDirectory: false)
+        let candidates = [
+            rp2350BoardAssetsRootURL(boardID: normalizedBoardID).appendingPathComponent("initial.uf2", isDirectory: false),
+            legacyRuntimeAssetsRootURL().appendingPathComponent("\(normalizedBoardID)/initial.uf2", isDirectory: false),
+            rp2350BoardAssetsRootURL(boardID: "ColorEasyPICO2").appendingPathComponent("initial.uf2", isDirectory: false),
+            legacyRuntimeAssetsRootURL().appendingPathComponent("ColorEasyPICO2/initial.uf2", isDirectory: false),
+        ]
+        return candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) ?? candidates[0]
     }
 
     private func configureRP2350Defaults() {
@@ -1237,9 +1332,16 @@ final class ToolkitViewModel: ObservableObject {
         guard isRP2350BoardID(boardID) else {
             return
         }
-        let runtimeAssetsRoot = sharedRuntimeRootURL().appendingPathComponent("assets", isDirectory: true).path
         let currentPath = rp2350UF2Path.trimmingCharacters(in: .whitespacesAndNewlines)
-        let shouldReplace = currentPath.isEmpty || currentPath.hasPrefix(runtimeAssetsRoot)
+        let managedRoots = [
+            appSupportRootURL()
+                .appendingPathComponent("families", isDirectory: true)
+                .appendingPathComponent("rp2350", isDirectory: true)
+                .appendingPathComponent("boards", isDirectory: true)
+                .path,
+            legacyRuntimeAssetsRootURL().path,
+        ]
+        let shouldReplace = currentPath.isEmpty || managedRoots.contains(where: { currentPath.hasPrefix($0) })
         guard shouldReplace else {
             return
         }
@@ -1327,15 +1429,21 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func appSupportRootURL() -> URL {
-        let fileManager = FileManager.default
-        let generic = (fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("development-board-toolchain")) ?? URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("development-board-toolchain")
-        let legacy = (fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("rk356x-mac-toolkit")) ?? URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("rk356x-mac-toolkit")
-        if fileManager.fileExists(atPath: legacy.path), !fileManager.fileExists(atPath: generic.path) {
-            return legacy
-        }
-        return generic
+        Self.resolveToolkitSupportRoot()
+    }
+
+    func rk356xTaishanPiVariantRootURL() -> URL {
+        appSupportRootURL()
+            .appendingPathComponent("families", isDirectory: true)
+            .appendingPathComponent("rk356x", isDirectory: true)
+            .appendingPathComponent("boards", isDirectory: true)
+            .appendingPathComponent("TaishanPi", isDirectory: true)
+            .appendingPathComponent("variants", isDirectory: true)
+            .appendingPathComponent("1M-RK3566", isDirectory: true)
+    }
+
+    func legacyImagesRootURL() -> URL {
+        appSupportRootURL().appendingPathComponent("images", isDirectory: true)
     }
 
     func boardPluginsRootURL() -> URL {
@@ -1367,7 +1475,13 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func imagesRootURL() -> URL {
-        appSupportRootURL().appendingPathComponent("images", isDirectory: true)
+        let structured = rk356xTaishanPiVariantRootURL().appendingPathComponent("images", isDirectory: true)
+        let legacy = legacyImagesRootURL()
+        if FileManager.default.fileExists(atPath: legacy.path),
+           !FileManager.default.fileExists(atPath: structured.path) {
+            return legacy
+        }
+        return structured
     }
 
     func factoryImagesRootURL() -> URL {
@@ -1387,10 +1501,15 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func bundledBoardPluginsRootURL() -> URL {
-        let sourceRoot = sharedRuntimeRootURL().appendingPathComponent("builtin-plugin-seed", isDirectory: true)
-        return FileManager.default.fileExists(atPath: sourceRoot.path)
-            ? sourceRoot
-            : URL(fileURLWithPath: "/nonexistent", isDirectory: true)
+        let fileManager = FileManager.default
+        let candidates = [
+            sharedRuntimeRootURL().appendingPathComponent("builtin-plugin-seed", isDirectory: true),
+            sharedRuntimeRootURL()
+                .appendingPathComponent("board_plugins", isDirectory: true)
+                .appendingPathComponent("boards", isDirectory: true),
+        ]
+        return candidates.first(where: { fileManager.fileExists(atPath: $0.path) })
+            ?? URL(fileURLWithPath: "/nonexistent", isDirectory: true)
     }
 
     func ensureSeededBoardPlugins() {
@@ -1418,9 +1537,15 @@ final class ToolkitViewModel: ObservableObject {
         }
 
         guard fm.fileExists(atPath: sourceRoot.path) else { return }
-        let registryExists = fm.fileExists(atPath: boardPluginRegistryURL().path)
+        let registryHasInstalledEntries: Bool
+        if let data = try? Data(contentsOf: boardPluginRegistryURL()),
+           let registry = try? JSONDecoder().decode(InstalledBoardPluginsRegistry.self, from: data) {
+            registryHasInstalledEntries = !registry.installed.isEmpty
+        } else {
+            registryHasInstalledEntries = false
+        }
         let existingUserPlugins = discoveredInstalledUserPluginVersions()
-        guard !registryExists && existingUserPlugins.isEmpty else {
+        guard !registryHasInstalledEntries && existingUserPlugins.isEmpty else {
             return
         }
         let entries = (try? fm.contentsOfDirectory(at: sourceRoot, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
@@ -1472,6 +1597,17 @@ final class ToolkitViewModel: ObservableObject {
 
     func isBoardPluginInstalled(_ boardID: String) -> Bool {
         boardPluginInstalledVersion(boardID) != nil
+    }
+
+    func isBoardIntegrationBundled(_ boardID: String) -> Bool {
+        supportedBoard(for: boardID)?.integrationReady == true
+    }
+
+    func boardPluginLocalStatusText(_ boardID: String) -> String {
+        if let version = boardPluginInstalledVersion(boardID), !version.isEmpty {
+            return "本地 \(version)"
+        }
+        return isBoardIntegrationBundled(boardID) ? "应用内置" : "未安装"
     }
 
     func remoteBoardPluginEntry(_ boardID: String) -> RemoteBoardPluginEntry? {
@@ -1604,11 +1740,87 @@ final class ToolkitViewModel: ObservableObject {
         }
     }
 
-    private func liveBoardConnectionReady() -> Bool {
-        if connectedBoardID != nil || currentLiveCandidate != nil {
+    private var controlPageTargetBoardID: String? {
+        preferredControlBoardID ?? connectedBoardID
+    }
+
+    private func controlPageBoardFamily() -> BoardLogicFamily {
+        let resolvedBoardID = controlPageTargetBoardID
+            ?? currentControlCandidate?.boardID
+            ?? liveDetectedBoard?.id
+            ?? status?.device?.board_id
+        return boardLogicFamily(boardID: resolvedBoardID, status: status)
+    }
+
+    private func controlPageHasMatchingLiveSignal() -> Bool {
+        if let targetBoardID = controlPageTargetBoardID {
+            if let candidate = currentControlCandidate,
+               boardMatches(candidate.boardID, targetBoardID: targetBoardID) {
+                return true
+            }
+            if let candidate = currentLiveCandidate,
+               boardMatches(candidate.boardID, targetBoardID: targetBoardID) {
+                return true
+            }
+            if let boardID = liveDetectedBoard?.id,
+               boardMatches(boardID, targetBoardID: targetBoardID) {
+                return true
+            }
+            if let boardID = status?.device?.board_id,
+               boardMatches(boardID, targetBoardID: targetBoardID) {
+                return true
+            }
+        } else if currentLiveCandidate != nil || liveDetectedBoard != nil {
             return true
         }
-        return hasRockchipSignalFromStatus()
+
+        let usbMode = (status?.usb?.mode ?? "").lowercased()
+        let rpState = (status?.rp2350?.state ?? status?.usb?.mode ?? "").lowercased()
+        switch controlPageBoardFamily() {
+        case .taishanPi:
+            return usbMode == "loader" ||
+                usbMode == "usb-ecm" ||
+                usbMode == "rockchip-other" ||
+                status?.usbnet?.configured == true ||
+                status?.board?.ping == true ||
+                status?.board?.ssh_port_open == true ||
+                status?.board?.control_service == true
+        case .colorEasyPICO2:
+            return status?.rp2350?.connected == true ||
+                rpState == "bootsel" ||
+                rpState == "rp2350-bootsel" ||
+                rpState == "runtime-resettable" ||
+                rpState == "rp2350-runtime" ||
+                isRP2350SingleUSBMode(rpState)
+        case .generic:
+            return currentLiveCandidate != nil || liveDetectedBoard != nil || hasRockchipSignalFromStatus()
+        }
+    }
+
+    private func disconnectedFlashTransportReason() -> String {
+        switch controlPageBoardFamily() {
+        case .taishanPi:
+            return "当前未检测到可用于刷写的 TaishanPi 连接。请确认开发板已进入 Loader 或 USB ECM 状态。"
+        case .colorEasyPICO2:
+            return "当前未检测到可用于刷写的 RP2350 设备连接。请确认开发板已进入 RP2350 单 USB 或 BOOTSEL 状态。"
+        case .generic:
+            return "当前未检测到可用于刷写的开发板连接。请确认开发板已进入可刷写状态。"
+        }
+    }
+
+    private func disconnectedFlashTransportSummary() -> String {
+        switch controlPageBoardFamily() {
+        case .taishanPi:
+            return "请先连接 TaishanPi，或让开发板进入 Loader / USB ECM 后再执行镜像刷写。"
+        case .colorEasyPICO2:
+            return "请先连接 RP2350 设备，或让开发板进入 RP2350 单 USB / BOOTSEL 后再执行刷写。"
+        case .generic:
+            return "请先让设备进入可刷写状态后再执行镜像刷写。"
+        }
+    }
+
+    private func liveBoardConnectionReady() -> Bool {
+        controlPageHasMatchingLiveSignal()
     }
 
     private func liveUSBControlReady() -> Bool {
@@ -1646,7 +1858,7 @@ final class ToolkitViewModel: ObservableObject {
         guard liveBoardConnectionReady() else {
             return ActionAvailabilityState(
                 enabled: false,
-                reason: "当前未检测到可用于刷写的开发板连接。请确认开发板已进入 Loader、USB ECM 或 RP2350 单 USB 状态。"
+                reason: disconnectedFlashTransportReason()
             )
         }
 
@@ -1655,7 +1867,7 @@ final class ToolkitViewModel: ObservableObject {
             return .enabledState
         }
 
-        if boardLogicFamily(status: status) == .taishanPi {
+        if controlPageBoardFamily() == .taishanPi {
             switch usbMode {
             case "loader", "rockchip-other":
                 return .enabledState
@@ -1676,7 +1888,7 @@ final class ToolkitViewModel: ObservableObject {
             default:
                 return ActionAvailabilityState(
                     enabled: false,
-                    reason: "当前未检测到可用于刷写的开发板连接。请确认开发板已进入 Loader、USB ECM 或 RP2350 单 USB 状态。"
+                    reason: disconnectedFlashTransportReason()
                 )
             }
         }
@@ -1687,7 +1899,7 @@ final class ToolkitViewModel: ObservableObject {
 
         return ActionAvailabilityState(
             enabled: false,
-            reason: "当前未检测到可用于刷写的开发板连接。请确认开发板已进入 Loader、USB ECM 或 RP2350 单 USB 状态。"
+            reason: disconnectedFlashTransportReason()
         )
     }
 
@@ -1696,11 +1908,14 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func flashTransportSummaryText() -> String {
+        guard liveBoardConnectionReady() else {
+            return disconnectedFlashTransportSummary()
+        }
         let usbMode = (status?.usb?.mode ?? "").lowercased()
         if isRP2350SingleUSBMode(usbMode) {
             return "当前设备已处于 RP2350 单 USB 刷写链路，可直接执行刷写。"
         }
-        if boardLogicFamily(status: status) == .taishanPi {
+        if controlPageBoardFamily() == .taishanPi {
             switch usbMode {
             case "loader":
                 return "当前开发板已处于 Loader 模式，将直接执行刷写。"
@@ -1885,6 +2100,10 @@ final class ToolkitViewModel: ObservableObject {
         localAgentRootURL().appendingPathComponent("bin/dbt-agentd")
     }
 
+    func localAgentControlBinaryURL() -> URL {
+        localAgentRootURL().appendingPathComponent("bin/dbt-agentctl")
+    }
+
     func localAgentConfigURL() -> URL {
         localAgentRootURL().appendingPathComponent("config/dbt-agentd.local.json")
     }
@@ -1902,12 +2121,12 @@ final class ToolkitViewModel: ObservableObject {
         localAgentUnavailableReason = (normalized?.isEmpty == false) ? normalized : nil
     }
 
-    func localAgentMissingInstallMessage(binaryURL: URL, configURL: URL) -> String {
+    func localAgentMissingInstallMessage(controlURL: URL, binaryURL: URL, configURL: URL) -> String {
         let runtimeCommand = sharedRuntimeRootURL().appendingPathComponent(runtimeBinaryName)
         if FileManager.default.fileExists(atPath: runtimeCommand.path) {
-            return "未检测到本地 DBT Agent 安装。当前 GUI 需要共享 runtime 和本地 agent 同时存在。请重新运行完整安装器，或检查 \(binaryURL.path) 与 \(configURL.path)。"
+            return "未检测到本地 DBT Agent 安装。当前 GUI 需要共享 runtime 和本地 agent 同时存在。请重新运行完整安装器，或检查 \(controlURL.path)、\(binaryURL.path) 与 \(configURL.path)。"
         }
-        return "未检测到本地 DBT Agent 安装。请先完成 runtime 和 agent 安装，再重试。期望路径：\(binaryURL.path) 与 \(configURL.path)。"
+        return "未检测到本地 DBT Agent 安装。请先完成 runtime 和 agent 安装，再重试。期望路径：\(controlURL.path)、\(binaryURL.path) 与 \(configURL.path)。"
     }
 
     func localAgentUnavailableUserMessage() -> String {
@@ -2109,11 +2328,13 @@ final class ToolkitViewModel: ObservableObject {
         {
             return
         }
+        let controlURL = localAgentControlBinaryURL()
         let binaryURL = localAgentBinaryURL()
         let configURL = localAgentConfigURL()
-        guard FileManager.default.fileExists(atPath: binaryURL.path),
+        guard FileManager.default.fileExists(atPath: controlURL.path),
+              FileManager.default.fileExists(atPath: binaryURL.path),
               FileManager.default.fileExists(atPath: configURL.path) else {
-            setLocalAgentUnavailableReason(localAgentMissingInstallMessage(binaryURL: binaryURL, configURL: configURL))
+            setLocalAgentUnavailableReason(localAgentMissingInstallMessage(controlURL: controlURL, binaryURL: binaryURL, configURL: configURL))
             setLocalAgentRunning(false)
             return
         }
@@ -2123,33 +2344,30 @@ final class ToolkitViewModel: ObservableObject {
         do {
             await cleanupStaleLocalAgentProcessesIfNeeded(force: true)
             try FileManager.default.createDirectory(at: localAgentRunRootURL(), withIntermediateDirectories: true)
-            let logURL = localAgentRunRootURL().appendingPathComponent("dbt-agentd.log")
-            FileManager.default.createFile(atPath: logURL.path, contents: nil)
-            let logHandle = try FileHandle(forWritingTo: logURL)
-            try logHandle.seekToEnd()
-
-            let process = Process()
-            process.executableURL = binaryURL
-            process.arguments = ["--config", configURL.path]
-            process.currentDirectoryURL = localAgentRootURL()
-            process.standardOutput = logHandle
-            process.standardError = logHandle
-            try process.run()
-            writeLocalAgentPID(process.processIdentifier)
+            let preStartPID = await localAgentListenerPID()
+            let (code, output) = try await ProcessExecutor.run(
+                executableURL: controlURL,
+                arguments: ["service", "start", "--installed-root", localAgentRootURL().path, "--base-url", localAgentBaseURL.absoluteString],
+                currentDirectoryURL: localAgentRootURL(),
+                environment: ProcessInfo.processInfo.environment
+            )
+            guard code == 0 else {
+                let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                throw ToolkitGUIError.commandFailed(trimmed.isEmpty ? "本地 DBT Agent 启动失败" : trimmed)
+            }
             guard await waitForLocalAgentHealthz() else {
-                process.terminate()
-                try? await Task.sleep(for: .milliseconds(200))
-                if process.isRunning {
-                    process.interrupt()
-                }
-                if process.isRunning {
-                    process.terminate()
+                if let listenerPID = await localAgentListenerPID(), preStartPID == nil {
+                    terminateLocalAgentProcess(listenerPID)
                 }
                 writeLocalAgentPID(nil)
                 throw ToolkitGUIError.commandFailed("本地 DBT Agent 启动超时")
             }
+            let listenerPID = await localAgentListenerPID()
+            if preStartPID == nil {
+                ownedLocalAgentPID = listenerPID
+            }
+            writeLocalAgentPID(listenerPID)
             didBootstrapLocalAgent = true
-            ownedLocalAgentPID = process.processIdentifier
             setLocalAgentUnavailableReason(nil)
             setLocalAgentRunning(true)
             await cleanupStaleLocalAgentProcessesIfNeeded(force: true)
@@ -3655,6 +3873,9 @@ final class ToolkitViewModel: ObservableObject {
 
             let home = NSHomeDirectory()
             let codexCandidates = [
+                "\(home)/.codex/plugins/dbt-agent/.codex-plugin/plugin.json",
+                "\(home)/.codex/.tmp/plugins/plugins/dbt-agent/.codex-plugin/plugin.json",
+                "\(home)/plugins/dbt-agent/.codex-plugin/plugin.json",
                 "\(home)/.codex/.tmp/plugins/plugins/development-board-toolchain/.codex-plugin/plugin.json",
                 "\(home)/plugins/development-board-toolchain/.codex-plugin/plugin.json",
                 "\(home)/.codex/.tmp/plugins/plugins/rk356x-mac-toolkit/.codex-plugin/plugin.json",
@@ -4132,7 +4353,7 @@ final class ToolkitViewModel: ObservableObject {
         alert.informativeText = ""
         alert.icon = nil
         let accessory = NSHostingView(rootView: SSHConnectionPromptAccessoryView(boardIP: boardIP))
-        accessory.frame = NSRect(x: 0, y: 0, width: 320, height: 84)
+        accessory.frame = NSRect(x: 0, y: 0, width: 320, height: 108)
         alert.accessoryView = accessory
         alert.addButton(withTitle: "打开")
         alert.addButton(withTitle: "取消")
@@ -4150,12 +4371,67 @@ final class ToolkitViewModel: ObservableObject {
         }
     }
 
+    private func boardSSHKnownHostsURL() -> URL {
+        URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent(".ssh", isDirectory: true)
+            .appendingPathComponent("development-board-toolchain_known_hosts", isDirectory: false)
+    }
+
+    private func prepareBoardSSHKnownHosts(for boardIP: String) throws -> URL {
+        let fileManager = FileManager.default
+        let knownHostsURL = boardSSHKnownHostsURL()
+        let parentURL = knownHostsURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+        if !fileManager.fileExists(atPath: knownHostsURL.path) {
+            fileManager.createFile(atPath: knownHostsURL.path, contents: Data())
+        }
+
+        // Board images are reflashed frequently, so stale host keys at the USB ECM IP are expected.
+        for host in [boardIP, "[\(boardIP)]:22"] {
+            do {
+                _ = try ProcessExecutor.runSync(
+                    executableURL: URL(fileURLWithPath: "/usr/bin/ssh-keygen"),
+                    arguments: ["-R", host, "-f", knownHostsURL.path],
+                    currentDirectoryURL: appSupportRootURL(),
+                    environment: ProcessInfo.processInfo.environment
+                )
+            } catch {
+                // Best effort only. The follow-up SSH command still uses the GUI-owned known_hosts file.
+            }
+        }
+
+        return knownHostsURL
+    }
+
+    private func sshTerminalCommand(boardIP: String, knownHostsURL: URL) -> String {
+        [
+            "/usr/bin/ssh",
+            "-o", "UserKnownHostsFile=\(knownHostsURL.path)",
+            "-o", "GlobalKnownHostsFile=/dev/null",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "WarnWeakCrypto=no",
+            "-o", "LogLevel=ERROR",
+            "root@\(boardIP)"
+        ]
+        .map(shellQuotedArgument)
+        .joined(separator: " ")
+    }
+
     private func openSSHTerminal(boardIP: String) {
+        let knownHostsURL: URL
+        do {
+            knownHostsURL = try prepareBoardSSHKnownHosts(for: boardIP)
+        } catch {
+            presentInlineError("准备 SSH 主机密钥缓存失败: \(error.localizedDescription)")
+            appendActivity(level: .error, title: "SSH", message: "准备 SSH 主机密钥缓存失败", detail: error.localizedDescription)
+            return
+        }
+        let command = sshTerminalCommand(boardIP: boardIP, knownHostsURL: knownHostsURL)
         let script = """
         tell application "Terminal"
             reopen
             activate
-            do script "ssh root@\(boardIP)"
+            do script \(appleScriptStringLiteral(command))
         end tell
         """
         let process = Process()
@@ -4164,7 +4440,7 @@ final class ToolkitViewModel: ObservableObject {
         do {
             try process.run()
             popoverCloseRequestID = UUID()
-            appendActivity(level: .success, title: "SSH", message: "已打开终端连接", detail: "ssh root@\(boardIP)")
+            appendActivity(level: .success, title: "SSH", message: "已打开终端连接", detail: "ssh root@\(boardIP)（已自动刷新板卡 SSH host key）")
         } catch {
             presentInlineError("打开终端失败: \(error.localizedDescription)")
             appendActivity(level: .error, title: "SSH", message: "打开终端失败", detail: error.localizedDescription)
@@ -6891,7 +7167,7 @@ final class ToolkitViewModel: ObservableObject {
 
     var currentControllableLiveCandidate: DetectedBoardCandidate? {
         guard let candidate = currentLiveCandidate,
-              isBoardPluginInstalled(candidate.boardID) else {
+              isBoardPluginInstalled(candidate.boardID) || isBoardIntegrationBundled(candidate.boardID) else {
             return nil
         }
         return candidate
@@ -7207,6 +7483,40 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     var deviceConnectionText: String {
+        if let targetBoardID = controlPageTargetBoardID {
+            if isRP2350BoardID(targetBoardID) {
+                guard controlPageHasMatchingLiveSignal() else {
+                    return "等待连接"
+                }
+                let mode = (status?.rp2350?.state ?? status?.usb?.mode ?? "absent").lowercased()
+                if mode == "bootsel" || mode == "rp2350-bootsel" {
+                    return "BOOTSEL USB"
+                }
+                if mode == "runtime-resettable" || mode == "rp2350-runtime" || isRP2350SingleUSBMode(mode) {
+                    return "RP2350 单 USB"
+                }
+                return "等待连接"
+            }
+            if boardMatches(targetBoardID, targetBoardID: "TaishanPi") {
+                guard controlPageHasMatchingLiveSignal() else {
+                    return "等待连接"
+                }
+                let mode = (status?.usb?.mode ?? "absent").lowercased()
+                switch mode {
+                case "loader":
+                    return "Loader 模式"
+                case "usb-ecm":
+                    return status?.usbnet?.configured == true ? "USB 网口已连接" : "USB 网口待配置"
+                case "rockchip-other":
+                    return "USB 已连接"
+                case "absent", "":
+                    return "等待连接"
+                default:
+                    return status?.usb?.mode ?? "待识别"
+                }
+            }
+        }
+
         if isRP2350BoardID(currentControlCandidate?.boardID) || isRP2350BoardID(preferredControlBoardID) || isRP2350BoardID(connectedBoardID) {
             let mode = (status?.rp2350?.state ?? status?.usb?.mode ?? "absent").lowercased()
             if mode == "bootsel" || mode == "rp2350-bootsel" {
@@ -7244,6 +7554,46 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     var deviceReachabilityText: String {
+        if let targetBoardID = controlPageTargetBoardID {
+            if isRP2350BoardID(targetBoardID) {
+                guard controlPageHasMatchingLiveSignal() else {
+                    return "等待连接"
+                }
+                let rpState = (status?.rp2350?.state ?? status?.usb?.mode ?? "not-found").lowercased()
+                if rpState == "bootsel" || rpState == "rp2350-bootsel" {
+                    return "BOOTSEL 已就绪"
+                }
+                if rpState == "runtime-resettable" || rpState == "rp2350-runtime" || isRP2350SingleUSBMode(rpState) {
+                    return "UF2 / 串口已就绪"
+                }
+                return "等待连接"
+            }
+            if boardMatches(targetBoardID, targetBoardID: "TaishanPi") {
+                guard controlPageHasMatchingLiveSignal() else {
+                    return "等待连接"
+                }
+                if taishanUSBECMTransportOnly() {
+                    return "USB ECM 已枚举，板端未响应"
+                }
+                if status?.board?.control_service == true {
+                    return "控制服务正常"
+                }
+                if status?.board?.ssh_port_open == true {
+                    return "SSH 可连接"
+                }
+                if status?.board?.ping == true {
+                    return "开发板在线"
+                }
+                if (status?.usb?.mode ?? "").lowercased() == "loader" {
+                    return "Loader 已就绪，可直接刷写"
+                }
+                if (status?.usb?.mode ?? "").lowercased() == "usb-ecm" {
+                    return status?.usbnet?.configured == true ? "USB 网口已连接" : "USB 网口待配置"
+                }
+                return "已检测到设备"
+            }
+        }
+
         if isRP2350BoardID(currentControlCandidate?.boardID) || isRP2350BoardID(preferredControlBoardID) || isRP2350BoardID(connectedBoardID) {
             let rpState = (status?.rp2350?.state ?? status?.usb?.mode ?? "not-found").lowercased()
             if rpState == "bootsel" || rpState == "rp2350-bootsel" {
@@ -7638,7 +7988,7 @@ struct ActionTile: View {
         if hovering {
             return Color.accentColor.opacity(0.12)
         }
-        return Color(nsColor: .controlBackgroundColor)
+        return Color.toolkitPanelBackground
     }
 
     private var borderColor: Color {
@@ -7676,7 +8026,7 @@ struct ActivityRow: View {
             }
         }
         .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color.toolkitPanelBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
@@ -8452,7 +8802,7 @@ struct InstallerOfflineCard: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(nsColor: .controlBackgroundColor))
+                    .background(Color.toolkitInputBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 Button("选择目录", action: chooseAction)
                     .controlSize(.large)
@@ -8554,7 +8904,7 @@ struct ReleaseLogConsole: View {
             }
             .frame(minHeight: logHeight, maxHeight: logHeight)
             .padding(12)
-            .background(Color(nsColor: .textBackgroundColor))
+            .background(Color.toolkitInputBackground)
             .foregroundStyle(Color.primary)
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -8805,7 +9155,7 @@ struct ToolkitInfoVersionWindowView: View {
                 colors: [
                     page.accentColor.opacity(0.16),
                     page.accentColor.opacity(0.08),
-                    Color(nsColor: .windowBackgroundColor)
+                    Color.toolkitWindowBackground
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -8863,6 +9213,10 @@ struct SSHConnectionPromptAccessoryView: View {
                     .font(.system(.caption, design: .monospaced).weight(.semibold))
                     .foregroundStyle(.primary)
                     .padding(.top, 2)
+                Text("连接前会自动清理该开发板 IP 的旧 host key，并写入 GUI 专用 known_hosts。")
+                    .font(.system(.caption2, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 0)
@@ -8927,7 +9281,7 @@ struct ToolkitInfoSectionCard: View {
             }
         }
         .padding(18)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color.toolkitPanelBackground)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 }
@@ -9063,7 +9417,7 @@ struct ToolkitDonationQRCodeCard: View {
             .aspectRatio(1, contentMode: .fit)
         }
         .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color.toolkitPanelBackground)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 }
@@ -9131,7 +9485,7 @@ struct ToolkitContactWindowView: View {
             minHeight: page.preferredSize.height,
             alignment: .topLeading
         )
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.toolkitWindowBackground)
     }
 }
 
@@ -9171,7 +9525,7 @@ struct ToolkitDonationPanel: View {
             }
         }
         .padding(18)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color.toolkitPanelBackground)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 }
@@ -9206,7 +9560,7 @@ struct ToolkitInfoWindowView: View {
             }
         }
         .frame(minWidth: page.preferredSize.width, minHeight: page.preferredSize.height)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.toolkitWindowBackground)
     }
 }
 
@@ -9747,7 +10101,7 @@ struct ActivityTab: View {
                     SelectableDetailTextView(text: entry.detail ?? entry.message)
                         .frame(minHeight: 220)
                     .padding(10)
-                    .background(Color(nsColor: .controlBackgroundColor))
+                    .background(Color.toolkitInputBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
             } else {
@@ -9881,16 +10235,33 @@ private func boardModelRootURL(for board: SupportedBoard) -> URL? {
         return nil
     }
     let fm = FileManager.default
-    let supportRoot = (fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-        .appendingPathComponent("development-board-toolchain/plugins", isDirectory: true))
-        ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/development-board-toolchain/plugins", isDirectory: true)
-
-    let sharedRuntimeRoot = ((fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-        .appendingPathComponent("development-board-toolchain", isDirectory: true))
-        ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/development-board-toolchain", isDirectory: true))
-        .appendingPathComponent("runtime", isDirectory: true)
+    let supportBaseRoot = ToolkitViewModel.resolveToolkitSupportRoot()
+    let supportRoot = supportBaseRoot.appendingPathComponent("plugins", isDirectory: true)
+    let sharedRuntimeRoot = supportBaseRoot.appendingPathComponent("runtime", isDirectory: true)
+    let familyBoardAssetsRoot: URL? = {
+        if isRP2350BoardID(board.id) {
+            return supportBaseRoot
+                .appendingPathComponent("families", isDirectory: true)
+                .appendingPathComponent("rp2350", isDirectory: true)
+                .appendingPathComponent("boards", isDirectory: true)
+                .appendingPathComponent(board.id, isDirectory: true)
+                .appendingPathComponent("assets", isDirectory: true)
+        }
+        if board.id == "TaishanPi" {
+            return supportBaseRoot
+                .appendingPathComponent("families", isDirectory: true)
+                .appendingPathComponent("rk356x", isDirectory: true)
+                .appendingPathComponent("boards", isDirectory: true)
+                .appendingPathComponent(board.id, isDirectory: true)
+                .appendingPathComponent("assets", isDirectory: true)
+        }
+        return nil
+    }()
 
     let candidates: [URL] = [
+        familyBoardAssetsRoot?
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent(directoryName, isDirectory: true),
         supportRoot
             .appendingPathComponent("user", isDirectory: true)
             .appendingPathComponent(board.id, isDirectory: true)
@@ -9906,7 +10277,13 @@ private func boardModelRootURL(for board: SupportedBoard) -> URL? {
             .appendingPathComponent(board.id, isDirectory: true)
             .appendingPathComponent("assets/models", isDirectory: true)
             .appendingPathComponent(directoryName, isDirectory: true),
-    ]
+        sharedRuntimeRoot
+            .appendingPathComponent("board_plugins", isDirectory: true)
+            .appendingPathComponent("boards", isDirectory: true)
+            .appendingPathComponent(board.id, isDirectory: true)
+            .appendingPathComponent("assets/models", isDirectory: true)
+            .appendingPathComponent(directoryName, isDirectory: true),
+    ].compactMap { $0 }
 
     for candidate in candidates where fm.fileExists(atPath: candidate.path) {
         return candidate
@@ -10442,7 +10819,7 @@ struct BoardModelPreviewCard: View {
             }
         }
         .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color.toolkitPanelBackground)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 }
@@ -10488,7 +10865,7 @@ struct BoardModelStandaloneWindowView: View {
         }
         .padding(20)
         .frame(minWidth: 860, minHeight: 660)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.toolkitWindowBackground)
     }
 }
 
@@ -10695,6 +11072,7 @@ struct SupportedBoardRowView: View {
     let selected: Bool
     let remoteVersion: String
     let installedVersion: String?
+    let bundledIntegrationAvailable: Bool
     let removable: Bool
     let operation: BoardPluginOperationState
     let action: () -> Void
@@ -10721,14 +11099,14 @@ struct SupportedBoardRowView: View {
             HStack(spacing: 8) {
                 Button("详情", action: detailAction)
                     .buttonStyle(.bordered)
-                if installedVersion == nil {
+                if installedVersion == nil, !bundledIntegrationAvailable {
                     Button("安装插件", action: action)
                         .buttonStyle(.borderedProminent)
                 } else if removable {
                     Button("删除插件", action: action)
                         .buttonStyle(.bordered)
                 } else {
-                    Button("内置插件") {}
+                    Button(bundledIntegrationAvailable ? "应用内置" : "内置插件") {}
                         .buttonStyle(.bordered)
                         .disabled(true)
                 }
@@ -10771,9 +11149,9 @@ struct SupportedBoardRowView: View {
                 Text(remoteVersion)
                     .font(.system(.subheadline, design: .rounded).weight(.semibold))
                     .lineLimit(1)
-                Text(installedVersion == nil ? "未安装" : "本地 \(installedVersion!)")
+                Text(installedVersion == nil ? (bundledIntegrationAvailable ? "应用内置" : "未安装") : "本地 \(installedVersion!)")
                     .font(.system(.caption2, design: .rounded))
-                    .foregroundStyle(installedVersion == nil ? Color.secondary : Color.green)
+                    .foregroundStyle((installedVersion == nil && !bundledIntegrationAvailable) ? Color.secondary : Color.green)
                     .lineLimit(1)
             }
             .frame(width: BoardCatalogLayout.versionWidth, alignment: .leading)
@@ -10785,7 +11163,7 @@ struct SupportedBoardRowView: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(selected ? Color.accentColor.opacity(0.10) : Color(nsColor: .controlBackgroundColor))
+                .fill(selected ? Color.accentColor.opacity(0.10) : Color.toolkitPanelBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -10886,6 +11264,7 @@ struct SupportedBoardDetailView: View {
     let board: SupportedBoard
     let remoteVersion: String
     let installedVersion: String?
+    let bundledIntegrationAvailable: Bool
     let currentControlBoardSelection: Binding<Bool>
     let hideOuterHero: Binding<Bool>
     let backAction: () -> Void
@@ -10921,7 +11300,7 @@ struct SupportedBoardDetailView: View {
 
     private var availableSections: [SupportedBoardDetailSection] {
         var sections: [SupportedBoardDetailSection] = [.overview, .summary, .capabilities, .variants]
-        if installedVersion != nil, !isRP2350BoardID(board.id) {
+        if (installedVersion != nil || bundledIntegrationAvailable), !isRP2350BoardID(board.id) {
             sections.append(.developmentEnvironment)
         }
         return sections
@@ -11107,7 +11486,7 @@ struct SupportedBoardDetailView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    if installedVersion != nil {
+                    if installedVersion != nil || bundledIntegrationAvailable {
                         VStack(alignment: .leading, spacing: 0) {
                             Toggle("当前控制页", isOn: currentControlBoardSelection)
                             .toggleStyle(.checkbox)
@@ -11133,7 +11512,7 @@ struct SupportedBoardDetailView: View {
                 .background(
                     ZStack {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color(nsColor: .controlBackgroundColor))
+                            .fill(Color.toolkitPanelBackground)
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .fill(selectedSection.tint(for: board).opacity(0.035))
                             .padding(1)
@@ -11195,7 +11574,7 @@ struct SupportedBoardDetailView: View {
         .padding(.trailing, 20)
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.toolkitWindowBackground)
         .background(
             LocalScrollMonitorView(onScroll: handleScrollDelta)
                 .allowsHitTesting(false)
@@ -11336,7 +11715,9 @@ struct SupportedBoardDetailView: View {
                     detailMetricCard(
                         title: "插件版本",
                         value: remoteVersion,
-                        detail: installedVersion == nil ? "本地未安装" : "本地 \(installedVersion!)"
+                        detail: installedVersion == nil
+                            ? (bundledIntegrationAvailable ? "应用内置，无需单独安装" : "本地未安装")
+                            : "本地 \(installedVersion!)"
                     )
                     detailMetricCard(
                         title: "集成状态",
@@ -11403,7 +11784,7 @@ struct SupportedBoardDetailView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
-                        .background(Color(nsColor: .controlBackgroundColor))
+                        .background(Color.toolkitPanelBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
                 }
@@ -11433,7 +11814,7 @@ struct SupportedBoardDetailView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 82, alignment: .topLeading)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color.toolkitPanelBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
@@ -11492,14 +11873,14 @@ struct DetectedDeviceSelectionOverlay: View {
                         .buttonStyle(.borderedProminent)
                     }
                     .padding(12)
-                    .background(Color(nsColor: .controlBackgroundColor))
+                    .background(Color.toolkitPanelBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
             }
         }
         .padding(18)
         .frame(width: 560)
-        .background(.regularMaterial)
+        .background(Color.toolkitOverlayBackground)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -11551,14 +11932,14 @@ struct RP2350FlashTargetOverlay: View {
                         .buttonStyle(.borderedProminent)
                     }
                     .padding(12)
-                    .background(Color(nsColor: .controlBackgroundColor))
+                    .background(Color.toolkitPanelBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
             }
         }
         .padding(18)
         .frame(width: 560)
-        .background(.regularMaterial)
+        .background(Color.toolkitOverlayBackground)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -11579,7 +11960,7 @@ struct DisconnectedBoardHubView: View {
     @State private var detailPresentationArmed = false
 
     private var searchFieldBackground: Color {
-        Color(nsColor: .textBackgroundColor)
+        Color.toolkitInputBackground
     }
 
     private var searchFieldBorder: Color {
@@ -11662,6 +12043,7 @@ struct DisconnectedBoardHubView: View {
                         board: detailBoard,
                         remoteVersion: vm.boardPluginDisplayVersion(detailBoard.id),
                         installedVersion: vm.boardPluginInstalledVersion(detailBoard.id),
+                        bundledIntegrationAvailable: vm.isBoardIntegrationBundled(detailBoard.id),
                         currentControlBoardSelection: Binding(
                             get: { vm.preferredControlBoardID == detailBoard.id },
                             set: { isOn in
@@ -11705,6 +12087,7 @@ struct DisconnectedBoardHubView: View {
                                             selected: selectedBoardID == board.id,
                                             remoteVersion: vm.boardPluginDisplayVersion(board.id),
                                             installedVersion: vm.boardPluginInstalledVersion(board.id),
+                                            bundledIntegrationAvailable: vm.isBoardIntegrationBundled(board.id),
                                             removable: vm.canRemoveBoardPlugin(board.id),
                                             operation: vm.boardPluginOperation(for: board.id),
                                             action: { vm.installOrRemoveBoardPlugin(board) },
@@ -11856,7 +12239,7 @@ struct ConnectedBoardDashboardView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .background(Color(nsColor: .controlBackgroundColor))
+                        .background(Color.toolkitPanelBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.plain)
@@ -11896,7 +12279,7 @@ struct ConnectedBoardDashboardView: View {
                                         .padding(.horizontal, 12)
                                         .padding(.vertical, 10)
                                         .frame(maxWidth: .infinity, alignment: .leading)
-                                        .background(Color(nsColor: .controlBackgroundColor))
+                                        .background(Color.toolkitPanelBackground)
                                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                     }
                                     .buttonStyle(.plain)
@@ -12111,7 +12494,7 @@ struct TaskOverlayView: View {
                     .frame(maxWidth: .infinity, minHeight: 132, maxHeight: 132, alignment: .topLeading)
                 }
                 .padding(10)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(Color.toolkitInputBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
 
                 HStack {
@@ -12123,7 +12506,7 @@ struct TaskOverlayView: View {
             }
             .padding(16)
             .frame(width: 430)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(Color.toolkitOverlayBackground)
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .shadow(radius: 18)
         }
@@ -12211,7 +12594,7 @@ struct ContentView: View {
             .padding(.top, vm.isShowingBoardCatalog && hideCatalogHero ? 6 : 14)
             .padding(.bottom, 41)
             .frame(width: BoardCatalogLayout.popoverSize.width, height: BoardCatalogLayout.popoverSize.height)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(Color.toolkitWindowBackground)
             .allowsHitTesting(!vm.taskOverlayBlocking && rebootPromptPhase == nil)
 
             HStack(alignment: .center, spacing: 8) {
@@ -12279,7 +12662,7 @@ struct ContentView: View {
                     .frame(width: 410)
                     .background(
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color(nsColor: .windowBackgroundColor))
+                            .fill(Color.toolkitOverlayBackground)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 18, style: .continuous)

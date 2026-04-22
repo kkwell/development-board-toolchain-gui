@@ -61,7 +61,7 @@ Default toolchain rule:
 - first choice:
   - `/Users/kvell/kk-project/docker-project/RP2350/toolchains/arm-gnu-toolchain-15.2.rel1-darwin-arm64-arm-none-eabi`
 - fallback:
-  - `/Users/kvell/Library/Application Support/development-board-toolchain/board-environments/RP2350SDKCore/sdk_core/RP2350/toolchains/arm-gnu-toolchain-15.2.rel1-darwin-arm64-arm-none-eabi`
+  - `/Users/kvell/Library/development-board-toolchain/families/rp2350/shared/board-environments/RP2350SDKCore/sdk_core/RP2350/toolchains/arm-gnu-toolchain-15.2.rel1-darwin-arm64-arm-none-eabi`
 
 The build helper now auto-selects one of these roots and prepends its `bin` directory to `PATH`.
 
@@ -111,10 +111,10 @@ The exported distribution tree must also carry the same two initialization image
 Once the toolkit runtime is installed on the local machine, the deployed copies live at:
 
 - `ColorEasyPICO2`
-  - `/Users/kvell/Library/Application Support/development-board-toolchain/runtime/assets/ColorEasyPICO2/initial.uf2`
+  - `/Users/kvell/Library/development-board-toolchain/families/rp2350/boards/ColorEasyPICO2/assets/initial.uf2`
 
 - `RaspberryPiPico2W`
-  - `/Users/kvell/Library/Application Support/development-board-toolchain/runtime/assets/RaspberryPiPico2W/initial.uf2`
+  - `/Users/kvell/Library/development-board-toolchain/families/rp2350/boards/RaspberryPiPico2W/assets/initial.uf2`
 
 Current packaging source:
 
@@ -201,5 +201,5 @@ When changing RP2350 initialization behavior:
 4. Verify the synchronized copies under:
    - `product_release/runtime/toolkit-runtime/assets/<BoardID>/initial.uf2`
    - `product_release/distribution_repo/runtime/toolkit-runtime/assets/<BoardID>/initial.uf2`
-   - `~/Library/Application Support/development-board-toolchain/runtime/assets/<BoardID>/initial.uf2`
+   - `~/Library/development-board-toolchain/families/rp2350/boards/<BoardID>/assets/initial.uf2`
 5. Update this document if any fixed path or naming rule changed.

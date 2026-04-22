@@ -101,7 +101,7 @@ Planned next networking step for multiple `TaishanPi` boards:
   - board `198.19.77.2`
 - the older reversed pair `198.19.77.2 <-> 198.19.77.1` should be treated as stale helper/runtime output, not the target contract
 - current host-side slot persistence:
-  - `~/Library/Application Support/development-board-toolchain/state/taishanpi-usbnet-slots.json`
+  - `~/Library/development-board-toolchain/state/taishanpi-usbnet-slots.json`
 - current migration behavior:
   - best-effort only
   - opt-in only through `DBT_USBNET_ENABLE_SLOT_MIGRATION=1`

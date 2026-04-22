@@ -126,24 +126,24 @@ Current size:
 Install script responsibilities:
 
 - install the plugin into:
-  - `~/Library/Application Support/development-board-toolchain/plugins/user/TaishanPi`
+  - `~/Library/development-board-toolchain/plugins/user/TaishanPi`
 - regenerate plugin install metadata
 - stage compile environment helper archives into:
-  - `~/Library/Application Support/development-board-toolchain/offline-packages/TaishanPi/compile-env-installer`
+  - `~/Library/development-board-toolchain/offline-packages/TaishanPi/compile-env-installer`
 
 ### RP2350 bundle
 
 Install script responsibilities:
 
 - install the plugins into:
-  - `~/Library/Application Support/development-board-toolchain/plugins/user/ColorEasyPICO2`
-  - `~/Library/Application Support/development-board-toolchain/plugins/user/RaspberryPiPico2W`
+  - `~/Library/development-board-toolchain/plugins/user/ColorEasyPICO2`
+  - `~/Library/development-board-toolchain/plugins/user/RaspberryPiPico2W`
 - stage shared RP2350 SDK core archive into:
-  - `~/Library/Application Support/development-board-toolchain/runtime/board_environments/RP2350SDKCore`
+  - `~/Library/development-board-toolchain/families/rp2350/shared/board-environments/RP2350SDKCore`
 - stage shared RP2350 runtime core archive into:
-  - `~/Library/Application Support/development-board-toolchain/runtime/board_environments/RP2350RuntimeCore`
+  - `~/Library/development-board-toolchain/families/rp2350/shared/board-environments/RP2350RuntimeCore`
 - stage shared RP2350 build overlay archive into:
-  - `~/Library/Application Support/development-board-toolchain/runtime/board_environments/RP2350BuildOverlay`
+  - `~/Library/development-board-toolchain/families/rp2350/shared/board-environments/RP2350BuildOverlay`
 - optionally preinstall:
   - `sdk_core`
   - `minimal_runtime`
@@ -152,9 +152,9 @@ Install script responsibilities:
 
 Installed environments land under:
 
-- `~/Library/Application Support/development-board-toolchain/board-environments/RP2350RuntimeCore/minimal_runtime`
-- `~/Library/Application Support/development-board-toolchain/board-environments/RP2350SDKCore/sdk_core`
-- `~/Library/Application Support/development-board-toolchain/board-environments/RP2350BuildOverlay`
+- `~/Library/development-board-toolchain/families/rp2350/shared/board-environments/RP2350RuntimeCore/minimal_runtime`
+- `~/Library/development-board-toolchain/families/rp2350/shared/board-environments/RP2350SDKCore/sdk_core`
+- `~/Library/development-board-toolchain/families/rp2350/shared/board-environments/RP2350BuildOverlay`
 
 `full_build` note:
 

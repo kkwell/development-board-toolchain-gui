@@ -86,12 +86,13 @@ It does **not** bundle:
 - shared runtime payloads
 - hardware operation toolchains
 
-Those are installed and updated separately under `~/Library/Application Support/development-board-toolchain`.
+Those are installed and updated separately under `~/Library/development-board-toolchain`.
 
 For a working GUI install, both of these local components must exist:
 
-- `~/Library/Application Support/development-board-toolchain/runtime/dbtctl`
-- `~/Library/Application Support/development-board-toolchain/agent/bin/dbt-agentd`
+- `~/Library/development-board-toolchain/runtime/dbtctl`
+- `~/Library/development-board-toolchain/agent/bin/dbt-agentctl`
+- `~/Library/development-board-toolchain/agent/bin/dbt-agentd`
 
 Optional environment variables:
 
@@ -108,7 +109,8 @@ Optional environment variables:
 
 ## Notes
 
-- The GUI is designed to work with the shared local install root under `~/Library/Application Support/development-board-toolchain`.
+- The GUI is designed to work with the shared local install root under `~/Library/development-board-toolchain`.
 - The app itself does not bundle the full runtime or `dbt-agentd`; those are installed and updated separately by the product installer/runtime.
+- Board-family assets should resolve the canonical family layout first, for example `families/rk356x/boards/TaishanPi/variants/1M-RK3566/images/` and `families/rp2350/boards/<BoardID>/assets/`.
 - The full product installer is expected to provision both `runtime/` and `agent/`. If `agent/` is missing, the GUI now reports the missing local install path instead of only showing a generic unavailable state.
 - The GUI only owns the local `dbt-agentd` service process it starts itself. It may clean up that GUI-owned process tree after a GUI-side job timeout, but it must not terminate `--mcp-serve` or unrelated agent processes.

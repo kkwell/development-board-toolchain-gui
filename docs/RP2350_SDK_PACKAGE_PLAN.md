@@ -26,9 +26,9 @@ Implemented and verified:
 Verified behavior:
 
 - generated RP2350 runtime installs land under:
-  - `~/Library/Application Support/development-board-toolchain/board-environments/RP2350RuntimeCore/minimal_runtime/RP2350`
+  - `~/Library/development-board-toolchain/families/rp2350/shared/board-environments/RP2350RuntimeCore/minimal_runtime/RP2350`
 - generated RP2350 projects resolve `PICO_SDK_PATH` to:
-  - `~/Library/Application Support/development-board-toolchain/board-environments/RP2350SDKCore/sdk_core/RP2350/pico-sdk`
+  - `~/Library/development-board-toolchain/families/rp2350/shared/board-environments/RP2350SDKCore/sdk_core/RP2350/pico-sdk`
 - RP2350 `minimal_runtime` install now works from the unified family bundle without any `ColorEasyPICO2/minimal_runtime` payload
 - `RP2350BuildOverlay/full_build` archive size dropped from about `643M` to about `8.0K`
 - unified `RP2350` offline bundle is about `656M`

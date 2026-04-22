@@ -74,7 +74,7 @@ Current validated behavior:
   - new multi-board TaishanPi scheme is reserved as one `/30` per board slot
   - target shape is `198.19.<slot>.1 <-> 198.19.<slot>.2`
   - current host-side slot registry path:
-    - `~/Library/Application Support/development-board-toolchain/state/taishanpi-usbnet-slots.json`
+    - `~/Library/development-board-toolchain/state/taishanpi-usbnet-slots.json`
   - host-side assignment flow:
     - `dbtctl` fetches a stable board UID over the current board IP
     - `dbtctl` assigns or reuses one slot in the host registry
@@ -224,16 +224,16 @@ Legacy `/v1/hermes/*` compatibility aliases may still exist internally, but they
 ## Installed Paths
 
 - control plane binary:
-  - `~/Library/Application Support/development-board-toolchain/agent/bin/dbt-agentd`
+  - `~/Library/development-board-toolchain/agent/bin/dbt-agentd`
 - config:
-  - `~/Library/Application Support/development-board-toolchain/agent/config`
+  - `~/Library/development-board-toolchain/agent/config`
 - agent state:
-  - `~/Library/Application Support/development-board-toolchain/agent/state`
+  - `~/Library/development-board-toolchain/agent/state`
 - logs:
-  - `~/Library/Application Support/development-board-toolchain/agent/logs`
+  - `~/Library/development-board-toolchain/agent/run/dbt-agentd.log`
 - published knowledge copied into installed agent tree:
-  - `~/Library/Application Support/development-board-toolchain/agent/vault`
-  - `~/Library/Application Support/development-board-toolchain/agent/registry`
+  - `~/Library/development-board-toolchain/agent/vault`
+  - `~/Library/development-board-toolchain/agent/registry`
 
 ## Current Coordination Baseline
 

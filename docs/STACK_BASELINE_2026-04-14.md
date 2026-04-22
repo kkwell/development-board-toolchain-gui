@@ -90,7 +90,7 @@ Do not merge all of these into one protocol file. The GUI and OpenCode clients h
 - `dbt-agentd` Swift service:
   - `/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/swift-agentd/Sources/DBTAgentd/main.swift`
 - `dbtctl` runtime integration:
-  - installed under `~/Library/Application Support/development-board-toolchain/runtime/dbtctl`
+  - installed under `~/Library/development-board-toolchain/runtime/dbtctl`
   - accessed only through `dbt-agentd` and documented in `docs/TOOL_INTERACTION_PROTOCOL.md`
 - OpenCode plugin source:
   - `/Users/kvell/kk-project/docker-project/docker_mac_env/opencode_plugin/opencode/plugins/development-board-toolchain.js`
@@ -104,17 +104,17 @@ Do not merge all of these into one protocol file. The GUI and OpenCode clients h
 ## Installed Runtime Paths
 
 - shared root:
-  - `~/Library/Application Support/development-board-toolchain`
+  - `~/Library/development-board-toolchain`
 - installed `dbtctl`:
-  - `~/Library/Application Support/development-board-toolchain/runtime/dbtctl`
+  - `~/Library/development-board-toolchain/runtime/dbtctl`
 - installed `dbt-agentd`:
-  - `~/Library/Application Support/development-board-toolchain/agent/bin/dbt-agentd`
+  - `~/Library/development-board-toolchain/agent/bin/dbt-agentd`
 - installed user plugins:
-  - `~/Library/Application Support/development-board-toolchain/plugins/user`
+  - `~/Library/development-board-toolchain/plugins/user`
 - installed board environments:
-  - `~/Library/Application Support/development-board-toolchain/board-environments`
+  - `~/Library/development-board-toolchain/families/rp2350/shared/board-environments`
 - staged offline board environment archives:
-  - `~/Library/Application Support/development-board-toolchain/runtime/board_environments`
+  - `~/Library/development-board-toolchain/families/rp2350/shared/board-environments`
 
 ## Maintenance Rule
 

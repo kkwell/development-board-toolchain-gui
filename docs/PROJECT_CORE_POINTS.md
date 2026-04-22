@@ -27,7 +27,7 @@ Not included:
 
 Those are installed separately under:
 
-- `~/Library/Application Support/development-board-toolchain`
+- `~/Library/development-board-toolchain`
 
 ## Architectural Rules
 
