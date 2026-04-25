@@ -89,10 +89,10 @@ Those are validation or temporary paths, not the long-term initialization baseli
 After build and packaging, the runtime assets must live at:
 
 - `ColorEasyPICO2`
-  - `/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/runtime/toolkit-runtime/assets/ColorEasyPICO2/initial.uf2`
+  - `/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/product_release/runtime/toolkit-runtime/assets/ColorEasyPICO2/initial.uf2`
 
 - `RaspberryPiPico2W`
-  - `/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/runtime/toolkit-runtime/assets/RaspberryPiPico2W/initial.uf2`
+  - `/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/product_release/runtime/toolkit-runtime/assets/RaspberryPiPico2W/initial.uf2`
 
 The release bundle builder copies from the fixed build outputs above into these runtime asset paths.
 
@@ -101,10 +101,10 @@ The release bundle builder copies from the fixed build outputs above into these 
 The exported distribution tree must also carry the same two initialization images:
 
 - `ColorEasyPICO2`
-  - `/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/distribution_repo/runtime/toolkit-runtime/assets/ColorEasyPICO2/initial.uf2`
+  - `/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/product_release/distribution_repo/runtime/toolkit-runtime/assets/ColorEasyPICO2/initial.uf2`
 
 - `RaspberryPiPico2W`
-  - `/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/distribution_repo/runtime/toolkit-runtime/assets/RaspberryPiPico2W/initial.uf2`
+  - `/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/product_release/distribution_repo/runtime/toolkit-runtime/assets/RaspberryPiPico2W/initial.uf2`
 
 ## Fixed Installed Runtime Paths
 
@@ -118,7 +118,7 @@ Once the toolkit runtime is installed on the local machine, the deployed copies 
 
 Current packaging source:
 
-- `/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/release-installer/build_runtime_bundle.sh`
+- `/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/product_release/release-installer/build_runtime_bundle.sh`
 
 Current sync command:
 

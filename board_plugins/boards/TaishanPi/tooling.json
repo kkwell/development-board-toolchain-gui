@@ -14,10 +14,17 @@
     "enabled": true,
     "install_script": "dbtctl release install-environment",
     "check_env_script": "dbtctl release check-env",
+    "supported_build_modes": [
+      "auto",
+      "local-llvm",
+      "docker"
+    ],
+    "default_build_mode": "auto",
     "docker_image_name": "tspi-rk356x-env",
     "docker_container_name": "tspi-rk356x-official-container",
     "docker_volume_name": "tspi-rk356x-official-workspace",
     "workspace_dir": "/home/<host-user>/workspace",
+    "local_workspace_dir": "/Volumes/LLVM-TSPI/tspi-rk3566-llvm-release-minimal",
     "sdk_dir": "sdk-tools",
     "c_project_dir": "c-project",
     "qt_project_dir": "qt-project",
@@ -100,6 +107,88 @@
         "strip": "sdk-tools/host/bin/aarch64-buildroot-linux-gnu-strip"
       }
     },
+    "cross_compile_local_llvm": {
+      "enabled": true,
+      "kind": "host-llvm",
+      "build_script": "clang",
+      "workspace_dir": "/Volumes/LLVM-TSPI/tspi-rk3566-llvm-release-minimal",
+      "project_dir": "qt-project/PalletizerQuick",
+      "project_root_dir": "qt-project",
+      "default_project_dir": "qt-project/PalletizerQuick",
+      "project_dir_configurable": true,
+      "project_file": "PalletizerQuick.pro",
+      "supported_languages": [
+        "c",
+        "c++"
+      ],
+      "requires_host_capabilities": [
+        "host_workspace",
+        "llvm_toolchain"
+      ],
+      "compiler_prefix": "aarch64-linux-gnu",
+      "compiler": {
+        "kind": "llvm",
+        "cc": "toolchain/llvm-cross/bin/aarch64-linux-gnu-gcc",
+        "cxx": "toolchain/llvm-cross/bin/aarch64-linux-gnu-g++",
+        "ar": "toolchain/llvm-cross/bin/aarch64-linux-gnu-ar",
+        "objcopy": "toolchain/llvm-cross/bin/aarch64-linux-gnu-objcopy",
+        "strip": "toolchain/llvm-cross/bin/aarch64-linux-gnu-strip",
+        "cflags": [
+          "--sysroot=${DBT_LOCAL_WORKSPACE}/toolchain/host/aarch64-buildroot-linux-gnu/sysroot"
+        ],
+        "cxxflags": [
+          "--sysroot=${DBT_LOCAL_WORKSPACE}/toolchain/host/aarch64-buildroot-linux-gnu/sysroot"
+        ],
+        "ldflags": [
+          "--sysroot=${DBT_LOCAL_WORKSPACE}/toolchain/host/aarch64-buildroot-linux-gnu/sysroot"
+        ]
+      }
+    },
+    "qt_cross_compile_local_llvm": {
+      "enabled": true,
+      "kind": "host-llvm",
+      "build_script": "portable-qmake",
+      "workspace_dir": "/Volumes/LLVM-TSPI/tspi-rk3566-llvm-release-minimal",
+      "project_dir": "qt-project/PalletizerQuick",
+      "project_root_dir": "qt-project",
+      "default_project_dir": "qt-project/PalletizerQuick",
+      "project_dir_configurable": true,
+      "project_file": "PalletizerQuick.pro",
+      "supported_languages": [
+        "c++",
+        "qt"
+      ],
+      "requires_host_capabilities": [
+        "host_workspace",
+        "llvm_toolchain",
+        "qt_toolchain"
+      ],
+      "compiler_prefix": "aarch64-linux-gnu",
+      "compiler": {
+        "kind": "llvm",
+        "cc": "toolchain/llvm-cross/bin/aarch64-linux-gnu-gcc",
+        "cxx": "toolchain/llvm-cross/bin/aarch64-linux-gnu-g++",
+        "ar": "toolchain/llvm-cross/bin/aarch64-linux-gnu-ar",
+        "objcopy": "toolchain/llvm-cross/bin/aarch64-linux-gnu-objcopy",
+        "strip": "toolchain/llvm-cross/bin/aarch64-linux-gnu-strip",
+        "cflags": [
+          "--sysroot=${DBT_LOCAL_WORKSPACE}/toolchain/host/aarch64-buildroot-linux-gnu/sysroot"
+        ],
+        "cxxflags": [
+          "--sysroot=${DBT_LOCAL_WORKSPACE}/toolchain/host/aarch64-buildroot-linux-gnu/sysroot"
+        ],
+        "ldflags": [
+          "--sysroot=${DBT_LOCAL_WORKSPACE}/toolchain/host/aarch64-buildroot-linux-gnu/sysroot"
+        ]
+      },
+      "qt": {
+        "qmake_bin": "scripts/portable-qmake.sh",
+        "qt_conf": "toolchain/qt6-rk3566-llvm-toolchain.cmake",
+        "library_dir": "qt-target/qt6-rk3566-llvm-6.8.3/lib",
+        "plugin_dir": "qt-target/qt6-rk3566-llvm-6.8.3/plugins",
+        "qml_import_dir": "qt-target/qt6-rk3566-llvm-6.8.3/qml"
+      }
+    },
     "qt_cross_compile": {
       "enabled": true,
       "kind": "docker-volume",
@@ -171,6 +260,10 @@
       "sdk_board_config": "device/rockchip/rk356x/BoardConfig-rk3566-tspi-v10.mk",
       "toolchain_profile": "cross_compile",
       "qt_toolchain_profile": "qt_cross_compile",
+      "docker_toolchain_profile": "cross_compile",
+      "docker_qt_toolchain_profile": "qt_cross_compile",
+      "local_toolchain_profile": "cross_compile_local_llvm",
+      "local_qt_toolchain_profile": "qt_cross_compile_local_llvm",
       "upload_transport": "ssh",
       "remote_workdir": "/userdata/c-project/.dbt-runtime",
       "artifact_upload_dir": "/userdata/c-project/bin"

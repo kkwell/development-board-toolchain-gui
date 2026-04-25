@@ -54,8 +54,30 @@ The overview page currently surfaces:
 - it must not open a second generic wait overlay after submission
 - the action is expected to go through the local `dbt-agentd` job path
 - once the local-agent reboot job is accepted, the confirmation prompt may keep a short success transition to show that the reboot request has been fully submitted, then close and continue completion tracking in the background
-- when the board is already in Loader mode, `设备重启` should stay enabled so the board can be requested back into normal runtime mode
+- when the board is already in Loader / Maskrom mode, `设备重启` should stay enabled so the board can be requested back into normal runtime mode
 - `切换 Loader` should use the same local-agent job style: submit quickly, release the foreground UI, and track completion in the background
+
+## Development Environment Page
+
+The TaishanPi development-environment panel must expose two independently detected modes:
+
+- `Docker Linux`
+  - based on Docker Desktop, the shared release image, the official workspace volume, and the runtime-managed factory image cache
+- `Mac LLVM`
+  - based on the Apple Silicon native LLVM SDK worktree, host LLVM tools, and the runtime staging directories used for LLVM-generated images
+
+Current GUI rules:
+
+- the GUI should auto-detect both modes on each refresh
+- when both environments are installed, the user may manually switch which mode's detailed cards are expanded
+- when only one environment is installed, the GUI should show the detected mode as fixed and should not expose a misleading mode selector
+- the current manual switch is a GUI-side environment selection; it must not imply that `dev build-sync` has already switched to another local-agent toolchain profile unless that profile is actually exposed by the local control plane
+- the default Mac LLVM SDK root is `/Volumes/LLVM-TSPI/sdk-tools`, unless `LLVM_TSPI_SDK_ROOT` overrides it
+- the GUI should surface:
+  - Docker Linux readiness
+  - Mac LLVM SDK mount / case-sensitive volume state
+  - Mac LLVM host-tool readiness
+  - LLVM image staging readiness for `custom/current` and `custom-clang-bootprobe/current`
 
 ## Flash Page
 
@@ -68,9 +90,10 @@ Important rule:
 
 ### Flash enablement
 
-- If the board is already in Loader / download mode, flash actions stay enabled and are treated as direct Loader flashing.
+- If the board is already in Loader mode, flash actions stay enabled and are treated as direct Loader flashing.
+- If the board is already in Maskrom mode, flash actions stay enabled; the runtime is expected to load `MiniLoaderAll.bin` first, then continue the flash through Loader.
 - If the board is in USB ECM runtime mode, flash actions require the USB control service to be responsive so the runtime can switch the board into Loader before flashing.
-- If USB ECM is present but the control service is not responsive, flash actions are disabled. The GUI should tell the user to restore the control service or manually enter Loader instead of submitting a flash job that will time out.
+- If USB ECM is present but the control service is not responsive, flash actions are disabled. The GUI should tell the user to restore the control service or manually enter Loader / Maskrom instead of submitting a flash job that will time out.
 
 ### Flash completion behavior
 

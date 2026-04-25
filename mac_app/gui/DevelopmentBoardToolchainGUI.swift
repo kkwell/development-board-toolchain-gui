@@ -677,18 +677,131 @@ struct StatusSnapshot: Equatable {
     let usbnetHelperInstalled: Bool
 }
 
+enum TaishanPiDevelopmentMode: String, CaseIterable, Identifiable {
+    case dockerLinux = "docker_linux"
+    case macLLVM = "mac_llvm"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .dockerLinux:
+            return "Linux GCC"
+        case .macLLVM:
+            return "Mac LLVM"
+        }
+    }
+
+    var buildModeArgument: String {
+        switch self {
+        case .dockerLinux:
+            return "docker"
+        case .macLLVM:
+            return "local-llvm"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .dockerLinux:
+            return "Docker 容器 + Linux 发布工作区"
+        case .macLLVM:
+            return "Apple Silicon 原生 LLVM 工具链"
+        }
+    }
+}
+
 struct DevelopmentInstallStatus: Equatable {
     var dockerReady = false
     var officialImageReady = false
     var releaseVolumeReady = false
     var hostImagesReady = false
     var rkflashtoolReady = false
+    var llvmSDKRoot = "/Volumes/LLVM-TSPI/sdk-tools"
+    var llvmSDKMounted = false
+    var llvmSDKCaseSensitive = false
+    var llvmEntryScriptsReady = false
+    var llvmCrossWrappersReady = false
+    var llvmHostWrappersReady = false
+    var llvmClangReady = false
+    var llvmLLDReady = false
+    var llvmObjcopyReady = false
+    var llvmReadelfReady = false
+    var llvmPython3Ready = false
+    var llvmDtcReady = false
+    var llvmFakerootReady = false
+    var llvmMke2fsReady = false
+    var llvmTune2fsReady = false
+    var llvmFactoryImagesReady = false
+    var llvmCustomImagesReady = false
+    var llvmBootProbeImagesReady = false
     var codexAvailable = false
     var codexPluginInstalled = false
     var openCodeAvailable = false
     var npmReady = false
     var openCodePluginInstalled = false
     var updatedAt = ""
+
+    var dockerEnvironmentReady: Bool {
+        dockerReady &&
+        officialImageReady &&
+        releaseVolumeReady &&
+        hostImagesReady &&
+        rkflashtoolReady
+    }
+
+    var dockerEnvironmentPartial: Bool {
+        dockerReady ||
+        officialImageReady ||
+        releaseVolumeReady ||
+        hostImagesReady ||
+        rkflashtoolReady
+    }
+
+    var llvmHostToolsReady: Bool {
+        llvmClangReady &&
+        llvmLLDReady &&
+        llvmObjcopyReady &&
+        llvmReadelfReady &&
+        llvmPython3Ready &&
+        llvmDtcReady &&
+        llvmFakerootReady &&
+        llvmMke2fsReady &&
+        llvmTune2fsReady
+    }
+
+    var llvmSDKReady: Bool {
+        llvmSDKMounted &&
+        llvmSDKCaseSensitive &&
+        llvmEntryScriptsReady &&
+        llvmCrossWrappersReady &&
+        llvmHostWrappersReady
+    }
+
+    var llvmEnvironmentReady: Bool {
+        llvmSDKReady &&
+        llvmHostToolsReady &&
+        llvmFactoryImagesReady
+    }
+
+    var llvmEnvironmentPartial: Bool {
+        llvmSDKMounted ||
+        llvmEntryScriptsReady ||
+        llvmCrossWrappersReady ||
+        llvmHostWrappersReady ||
+        llvmClangReady ||
+        llvmLLDReady ||
+        llvmObjcopyReady ||
+        llvmReadelfReady ||
+        llvmPython3Ready ||
+        llvmDtcReady ||
+        llvmFakerootReady ||
+        llvmMke2fsReady ||
+        llvmTune2fsReady ||
+        llvmFactoryImagesReady ||
+        llvmCustomImagesReady ||
+        llvmBootProbeImagesReady
+    }
 }
 
 struct LocalArtifactValidationItem: Identifiable, Equatable {
@@ -1103,6 +1216,7 @@ final class ToolkitViewModel: ObservableObject {
     @Published var showingSupportedBoardCatalog = true
     @Published var deviceSelectionPrompt: DeviceSelectionPrompt?
     @Published var rp2350FlashTargetPrompt: RP2350FlashTargetPrompt?
+    @Published var taishanPiDevelopmentMode: TaishanPiDevelopmentMode = .dockerLinux
     @Published var developmentInstallStatus = DevelopmentInstallStatus()
     @Published var installerLastDetail = "等待检查"
     @Published var toolkitUpdateStatus = ToolkitUpdateStatus()
@@ -1158,6 +1272,8 @@ final class ToolkitViewModel: ObservableObject {
     private var boardSSHFalseCount = 0
     private var boardControlFalseCount = 0
     private let boardFalseThreshold = 3
+    private let taishanPiDevelopmentModeDefaultsKey = "taishanPiDevelopmentMode"
+    private var hasUserSelectedTaishanPiDevelopmentMode = false
     private var selectedDetectedCandidateID: String?
     private var boardCatalogBaselineSignature: String?
     private var shouldRelaunchAfterToolkitUpdate = false
@@ -1168,6 +1284,7 @@ final class ToolkitViewModel: ObservableObject {
     private var lastBackgroundStatusNotificationAt: Date?
     private var lastBackgroundStatusNotificationMessage = ""
     private var rp2350ModeTransitionUntil: Date?
+    private var taishanLoaderTransitionUntil: Date?
 
     private enum BoardLogicFamily {
         case taishanPi
@@ -1186,6 +1303,15 @@ final class ToolkitViewModel: ObservableObject {
 
     var rp2350ModeTransitionHint: String {
         "设备模式切换中，请等待状态更新完成"
+    }
+
+    var taishanLoaderTransitionActive: Bool {
+        guard let until = taishanLoaderTransitionUntil else { return false }
+        return until > Date()
+    }
+
+    var taishanLoaderTransitionHint: String {
+        "正在进入 Loader 模式，请等待 USB 重新枚举"
     }
 
     private func boardLogicFamily(
@@ -1231,17 +1357,23 @@ final class ToolkitViewModel: ObservableObject {
               current?.usbnet?.configured == true else {
             return false
         }
-        return current?.board?.ssh_port_open != true &&
+        return current?.board?.ping != true &&
+            current?.board?.ssh_port_open != true &&
             current?.board?.control_service != true
     }
 
     var taishanUSBECMTransportOnlyWarningText: String {
-        "当前仅检测到 USB ECM 枚举，板端没有响应 SSH / 控制服务。GUI 不能再通过运行态链路执行重启或切换 Loader；如需继续刷写，请先让开发板手动进入 Loader 模式。"
+        "当前仅检测到 USB ECM 枚举，板端没有响应 Ping / SSH / 控制服务。GUI 不能再通过运行态链路执行重启或切换 Loader；如需继续刷写，请先让开发板手动进入 Loader 或 Maskrom 模式。"
     }
 
     init() {
         preferredControlBoardID = UserDefaults.standard.string(forKey: "preferredControlBoardID")
         preferredControlDeviceID = UserDefaults.standard.string(forKey: "preferredControlDeviceID")
+        if let raw = UserDefaults.standard.string(forKey: taishanPiDevelopmentModeDefaultsKey),
+           let mode = TaishanPiDevelopmentMode(rawValue: raw) {
+            taishanPiDevelopmentMode = mode
+            hasUserSelectedTaishanPiDevelopmentMode = true
+        }
         configureRP2350Defaults()
         loadInstalledBoardPlugins()
         requestNotificationPermission()
@@ -1260,8 +1392,6 @@ final class ToolkitViewModel: ObservableObject {
         }
         candidates.append(contentsOf: [
             home.appendingPathComponent("Library/development-board-toolchain", isDirectory: true),
-            home.appendingPathComponent("Library/Application Support/development-board-toolchain", isDirectory: true),
-            home.appendingPathComponent("Library/Application Support/rk356x-mac-toolkit", isDirectory: true),
         ])
 
         var seen = Set<String>()
@@ -1371,7 +1501,7 @@ final class ToolkitViewModel: ObservableObject {
 
     func persistInstalledBoardPlugins() throws {
         let fm = FileManager.default
-        try fm.createDirectory(at: boardPluginsRootURL(), withIntermediateDirectories: true)
+        try fm.createDirectory(at: userBoardPluginsRootURL(), withIntermediateDirectories: true)
         let data = try JSONEncoder().encode(InstalledBoardPluginsRegistry(installed: installedBoardPlugins))
         try data.write(to: boardPluginRegistryURL(), options: .atomic)
     }
@@ -1447,7 +1577,13 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func boardPluginsRootURL() -> URL {
-        appSupportRootURL().appendingPathComponent("plugins", isDirectory: true)
+        boardPluginStateRootURL()
+    }
+
+    func boardPluginStateRootURL() -> URL {
+        appSupportRootURL()
+            .appendingPathComponent("agent", isDirectory: true)
+            .appendingPathComponent("catalog", isDirectory: true)
     }
 
     func boardPluginCatalogCacheURL() -> URL {
@@ -1463,11 +1599,49 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func boardPluginInstallRootURL(for boardID: String) -> URL {
-        userBoardPluginsRootURL().appendingPathComponent(pluginBoardID(forLocalBoardID: boardID) ?? boardID, isDirectory: true)
+        boardPluginInstallRootURLs(for: boardID).first ??
+            userBoardPluginsRootURL().appendingPathComponent(pluginBoardID(forLocalBoardID: boardID) ?? boardID, isDirectory: true)
+    }
+
+    func boardPluginInstallRootURLs(for boardID: String) -> [URL] {
+        let pluginID = pluginBoardID(forLocalBoardID: boardID) ?? boardID
+        switch pluginID {
+        case "TaishanPi":
+            return ["1M-RK3566", "1F-RK3566", "3M-RK3576"].map { variantID in
+                appSupportRootURL()
+                    .appendingPathComponent("families", isDirectory: true)
+                    .appendingPathComponent("rk356x", isDirectory: true)
+                    .appendingPathComponent("boards", isDirectory: true)
+                    .appendingPathComponent("TaishanPi", isDirectory: true)
+                    .appendingPathComponent("variants", isDirectory: true)
+                    .appendingPathComponent(variantID, isDirectory: true)
+                    .appendingPathComponent("plugin", isDirectory: true)
+            }
+        case "ColorEasyPICO2":
+            return [
+                appSupportRootURL()
+                    .appendingPathComponent("families", isDirectory: true)
+                    .appendingPathComponent("rp2350", isDirectory: true)
+                    .appendingPathComponent("boards", isDirectory: true)
+                    .appendingPathComponent("ColorEasyPICO2", isDirectory: true)
+                    .appendingPathComponent("plugin", isDirectory: true)
+            ]
+        case "RaspberryPiPico2W":
+            return [
+                appSupportRootURL()
+                    .appendingPathComponent("families", isDirectory: true)
+                    .appendingPathComponent("rp2350", isDirectory: true)
+                    .appendingPathComponent("boards", isDirectory: true)
+                    .appendingPathComponent("RaspberryPiPico2W", isDirectory: true)
+                    .appendingPathComponent("plugin", isDirectory: true)
+            ]
+        default:
+            return [userBoardPluginsRootURL().appendingPathComponent(pluginID, isDirectory: true)]
+        }
     }
 
     func userBoardPluginsRootURL() -> URL {
-        boardPluginsRootURL().appendingPathComponent("user", isDirectory: true)
+        boardPluginsRootURL().appendingPathComponent("installed", isDirectory: true)
     }
 
     func sharedRuntimeRootURL() -> URL {
@@ -1496,8 +1670,247 @@ final class ToolkitViewModel: ObservableObject {
         factoryImagesRootURL().appendingPathComponent("current", isDirectory: true)
     }
 
+    func linuxGCCFactoryImageDirURL() -> URL {
+        let modeSpecific = imagesRootURL()
+            .appendingPathComponent("factory-gcc", isDirectory: true)
+            .appendingPathComponent("current", isDirectory: true)
+        if directoryHasTaishanPiImageSet(modeSpecific) {
+            return modeSpecific
+        }
+        return factoryImageDirURL()
+    }
+
+    func macLLVMFactoryImageDirURL() -> URL {
+        let environment = ProcessInfo.processInfo.environment
+        let candidates = [
+            environment["LLVM_TSPI_FACTORY_IMAGE_DIR"],
+            environment["DBT_LOCAL_LLVM_FACTORY_IMAGE_DIR"],
+            imagesRootURL().appendingPathComponent("factory-llvm/current", isDirectory: true).path,
+        ]
+        .compactMap { value -> URL? in
+            guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return URL(fileURLWithPath: value, isDirectory: true)
+        }
+        return candidates.first(where: directoryHasTaishanPiImageSet)
+            ?? imagesRootURL().appendingPathComponent("factory-llvm/current", isDirectory: true)
+    }
+
     func customImageDirURL() -> URL {
         customImagesRootURL().appendingPathComponent("current", isDirectory: true)
+    }
+
+    func linuxGCCCustomImageDirURL() -> URL {
+        let modeSpecific = imagesRootURL()
+            .appendingPathComponent("custom-gcc", isDirectory: true)
+            .appendingPathComponent("current", isDirectory: true)
+        if directoryHasTaishanPiImageSet(modeSpecific) {
+            return modeSpecific
+        }
+        return customImageDirURL()
+    }
+
+    func macLLVMCustomImageDirURL() -> URL {
+        let environment = ProcessInfo.processInfo.environment
+        let candidates = [
+            environment["DBT_LOCAL_IMAGE_OUTPUT_DIR"],
+            environment["DBT_LOCAL_LLVM_CUSTOM_IMAGE_DIR"],
+            imagesRootURL().appendingPathComponent("custom-llvm/current", isDirectory: true).path,
+        ]
+        .compactMap { value -> URL? in
+            guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return URL(fileURLWithPath: value, isDirectory: true)
+        }
+        return candidates.first(where: directoryHasTaishanPiImageSet)
+            ?? imagesRootURL().appendingPathComponent("custom-llvm/current", isDirectory: true)
+    }
+
+    func taishanPiLLVMBootProbeImagesRootURL() -> URL {
+        imagesRootURL().appendingPathComponent("custom-clang-bootprobe", isDirectory: true)
+    }
+
+    func taishanPiLLVMBootProbeImageDirURL() -> URL {
+        taishanPiLLVMBootProbeImagesRootURL().appendingPathComponent("current", isDirectory: true)
+    }
+
+    func taishanPiLLVMReleaseRootURL() -> URL {
+        let environment = ProcessInfo.processInfo.environment
+        let candidates = [
+            environment["LLVM_TSPI_RELEASE_ROOT"],
+            "/Volumes/LLVM-TSPI/tspi-rk3566-llvm-release-minimal"
+        ]
+        .compactMap { value -> URL? in
+            guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return URL(fileURLWithPath: value, isDirectory: true)
+        }
+        let fm = FileManager.default
+        return candidates.first(where: { fm.fileExists(atPath: $0.path) }) ?? candidates[0]
+    }
+
+    func taishanPiLLVMSDKRootURL() -> URL {
+        let environment = ProcessInfo.processInfo.environment
+        let candidates = [
+            environment["LLVM_TSPI_RELEASE_ROOT"],
+            "/Volumes/LLVM-TSPI/tspi-rk3566-llvm-release-minimal",
+            environment["LLVM_TSPI_SDK_ROOT"],
+            "/Volumes/LLVM-TSPI/sdk-tools",
+            "/Users/kvell/kk-project/DBT-Agent-Project/llvm-build-tspi"
+        ]
+        .compactMap { value -> URL? in
+            guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return URL(fileURLWithPath: value, isDirectory: true)
+        }
+
+        let fm = FileManager.default
+        return candidates.first(where: { fm.fileExists(atPath: $0.path) }) ?? candidates[0]
+    }
+
+    func setTaishanPiDevelopmentMode(_ mode: TaishanPiDevelopmentMode) {
+        let modes = availableTaishanPiDevelopmentModes
+        if modes.count == 1, let onlyMode = modes.first, onlyMode != mode {
+            taishanPiDevelopmentMode = onlyMode
+            hasUserSelectedTaishanPiDevelopmentMode = false
+            UserDefaults.standard.set(onlyMode.rawValue, forKey: taishanPiDevelopmentModeDefaultsKey)
+            refreshActionAvailability()
+            return
+        }
+        taishanPiDevelopmentMode = mode
+        hasUserSelectedTaishanPiDevelopmentMode = true
+        UserDefaults.standard.set(mode.rawValue, forKey: taishanPiDevelopmentModeDefaultsKey)
+        if !localArtifactsDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            validateLocalArtifactsDirectory()
+        }
+        refreshActionAvailability()
+        Task {
+            await refreshDevelopmentInstallStatus()
+        }
+    }
+
+    func taishanPiBuildModeArguments() -> [String] {
+        ["--build-mode", taishanPiDevelopmentMode.buildModeArgument]
+    }
+
+    var availableTaishanPiDevelopmentModes: [TaishanPiDevelopmentMode] {
+        let readyModes = readyTaishanPiDevelopmentModes(using: developmentInstallStatus)
+        if !readyModes.isEmpty {
+            return readyModes
+        }
+
+        let partialModes = partialTaishanPiDevelopmentModes(using: developmentInstallStatus)
+        if !partialModes.isEmpty {
+            return partialModes
+        }
+
+        return TaishanPiDevelopmentMode.allCases
+    }
+
+    var canChooseTaishanPiDevelopmentMode: Bool {
+        availableTaishanPiDevelopmentModes.count > 1
+    }
+
+    var taishanPiDevelopmentModeFixedSummary: String {
+        if availableTaishanPiDevelopmentModes.count == 1 {
+            return "\(taishanPiDevelopmentMode.title) 已按本机已安装环境自动选择"
+        }
+        return "等待开发环境检查"
+    }
+
+    private func readyTaishanPiDevelopmentModes(using status: DevelopmentInstallStatus) -> [TaishanPiDevelopmentMode] {
+        var modes: [TaishanPiDevelopmentMode] = []
+        if status.dockerEnvironmentReady {
+            modes.append(.dockerLinux)
+        }
+        if status.llvmEnvironmentReady {
+            modes.append(.macLLVM)
+        }
+        return modes
+    }
+
+    private func partialTaishanPiDevelopmentModes(using status: DevelopmentInstallStatus) -> [TaishanPiDevelopmentMode] {
+        var modes: [TaishanPiDevelopmentMode] = []
+        if status.dockerEnvironmentPartial {
+            modes.append(.dockerLinux)
+        }
+        if status.llvmEnvironmentPartial {
+            modes.append(.macLLVM)
+        }
+        return modes
+    }
+
+    private func autoSelectTaishanPiDevelopmentMode(using status: DevelopmentInstallStatus) {
+        let readyModes = readyTaishanPiDevelopmentModes(using: status)
+        if readyModes.count == 1, let mode = readyModes.first {
+            taishanPiDevelopmentMode = mode
+            hasUserSelectedTaishanPiDevelopmentMode = false
+            UserDefaults.standard.set(mode.rawValue, forKey: taishanPiDevelopmentModeDefaultsKey)
+            return
+        }
+
+        let partialModes = partialTaishanPiDevelopmentModes(using: status)
+        if readyModes.isEmpty, partialModes.count == 1, let mode = partialModes.first {
+            taishanPiDevelopmentMode = mode
+            hasUserSelectedTaishanPiDevelopmentMode = false
+            UserDefaults.standard.set(mode.rawValue, forKey: taishanPiDevelopmentModeDefaultsKey)
+            return
+        }
+
+        guard !hasUserSelectedTaishanPiDevelopmentMode else {
+            return
+        }
+        if status.llvmEnvironmentReady && !status.dockerEnvironmentReady {
+            taishanPiDevelopmentMode = .macLLVM
+            return
+        }
+        if status.dockerEnvironmentReady && !status.llvmEnvironmentReady {
+            taishanPiDevelopmentMode = .dockerLinux
+            return
+        }
+        if status.llvmEnvironmentPartial && !status.dockerEnvironmentPartial {
+            taishanPiDevelopmentMode = .macLLVM
+        }
+    }
+
+    private func volumeSupportsCaseSensitiveNames(at url: URL) -> Bool {
+        let target = FileManager.default.fileExists(atPath: url.path) ? url : url.deletingLastPathComponent()
+        guard FileManager.default.fileExists(atPath: target.path) else {
+            return false
+        }
+        let values = try? target.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+        return values?.volumeSupportsCaseSensitiveNames == true
+    }
+
+    private func directoryHasTaishanPiImageSet(_ directory: URL) -> Bool {
+        let fm = FileManager.default
+        let required = [
+            "MiniLoaderAll.bin",
+            "parameter.txt",
+            "boot.img",
+            "uboot.img",
+            "userdata.img",
+        ]
+        let rootfsCandidates = ["rootfs.img", "rootfs.ext4"]
+        return required.allSatisfy { fm.fileExists(atPath: directory.appendingPathComponent($0).path) } &&
+            rootfsCandidates.contains { fm.fileExists(atPath: directory.appendingPathComponent($0).path) }
+    }
+
+    private func executableAvailable(
+        candidatePaths: [String],
+        fallbackCommand: String? = nil
+    ) async -> Bool {
+        if candidatePaths.contains(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            return true
+        }
+        guard let fallbackCommand, !fallbackCommand.isEmpty else {
+            return false
+        }
+        return await commandExists(fallbackCommand)
     }
 
     func bundledBoardPluginsRootURL() -> URL {
@@ -1518,14 +1931,16 @@ final class ToolkitViewModel: ObservableObject {
         let userRoot = userBoardPluginsRootURL()
         try? fm.createDirectory(at: userRoot, withIntermediateDirectories: true)
 
-        let legacyBuiltinRoot = boardPluginsRootURL().appendingPathComponent("builtin", isDirectory: true)
+        let legacyBuiltinRoot = appSupportRootURL()
+            .appendingPathComponent("plugins", isDirectory: true)
+            .appendingPathComponent("builtin", isDirectory: true)
         if fm.fileExists(atPath: legacyBuiltinRoot.path) {
             let legacyEntries = (try? fm.contentsOfDirectory(at: legacyBuiltinRoot, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
             for entry in legacyEntries {
                 let values = try? entry.resourceValues(forKeys: [.isDirectoryKey])
                 guard values?.isDirectory == true else { continue }
-                let target = userRoot.appendingPathComponent(entry.lastPathComponent, isDirectory: true)
-                if !fm.fileExists(atPath: target.path) {
+                for target in boardPluginInstallRootURLs(for: entry.lastPathComponent) where !fm.fileExists(atPath: target.path) {
+                    try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                     try? fm.copyItem(at: entry, to: target)
                 }
                 try? fm.removeItem(at: entry)
@@ -1552,17 +1967,44 @@ final class ToolkitViewModel: ObservableObject {
         for entry in entries {
             let values = try? entry.resourceValues(forKeys: [.isDirectoryKey])
             guard values?.isDirectory == true else { continue }
-            let target = userRoot.appendingPathComponent(entry.lastPathComponent, isDirectory: true)
-            guard !fm.fileExists(atPath: target.path) else { continue }
-            try? fm.copyItem(at: entry, to: target)
+            let variantRoot = entry.appendingPathComponent("variants", isDirectory: true)
+            if entry.lastPathComponent == "TaishanPi", fm.fileExists(atPath: variantRoot.path) {
+                for variantID in ["1M-RK3566", "1F-RK3566", "3M-RK3576"] {
+                    let sourceVariant = variantRoot
+                        .appendingPathComponent(variantID, isDirectory: true)
+                        .appendingPathComponent("plugin", isDirectory: true)
+                    guard fm.fileExists(atPath: sourceVariant.path) else { continue }
+                    let target = appSupportRootURL()
+                        .appendingPathComponent("families", isDirectory: true)
+                        .appendingPathComponent("rk356x", isDirectory: true)
+                        .appendingPathComponent("boards", isDirectory: true)
+                        .appendingPathComponent("TaishanPi", isDirectory: true)
+                        .appendingPathComponent("variants", isDirectory: true)
+                        .appendingPathComponent(variantID, isDirectory: true)
+                        .appendingPathComponent("plugin", isDirectory: true)
+                    guard !fm.fileExists(atPath: target.path) else { continue }
+                    try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try? fm.copyItem(at: sourceVariant, to: target)
+                }
+                continue
+            }
+            for target in boardPluginInstallRootURLs(for: entry.lastPathComponent) where !fm.fileExists(atPath: target.path) {
+                try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? fm.copyItem(at: entry, to: target)
+            }
         }
     }
 
     func discoveredInstalledUserPluginVersions() -> [String: String] {
         let fm = FileManager.default
+        var entries: [URL] = []
+        for board in SupportedBoard.catalog {
+            entries.append(contentsOf: boardPluginInstallRootURLs(for: board.id))
+        }
         let root = userBoardPluginsRootURL()
-        guard fm.fileExists(atPath: root.path) else { return [:] }
-        let entries = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+        if fm.fileExists(atPath: root.path) {
+            entries.append(contentsOf: (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? [])
+        }
         var discovered: [String: String] = [:]
         for entry in entries {
             let values = try? entry.resourceValues(forKeys: [.isDirectoryKey])
@@ -1779,6 +2221,7 @@ final class ToolkitViewModel: ObservableObject {
         switch controlPageBoardFamily() {
         case .taishanPi:
             return usbMode == "loader" ||
+                usbMode == "maskrom" ||
                 usbMode == "usb-ecm" ||
                 usbMode == "rockchip-other" ||
                 status?.usbnet?.configured == true ||
@@ -1800,7 +2243,7 @@ final class ToolkitViewModel: ObservableObject {
     private func disconnectedFlashTransportReason() -> String {
         switch controlPageBoardFamily() {
         case .taishanPi:
-            return "当前未检测到可用于刷写的 TaishanPi 连接。请确认开发板已进入 Loader 或 USB ECM 状态。"
+            return "当前未检测到可用于刷写的 TaishanPi 连接。请确认开发板已进入 Loader、Maskrom 或 USB ECM 状态。"
         case .colorEasyPICO2:
             return "当前未检测到可用于刷写的 RP2350 设备连接。请确认开发板已进入 RP2350 单 USB 或 BOOTSEL 状态。"
         case .generic:
@@ -1811,7 +2254,7 @@ final class ToolkitViewModel: ObservableObject {
     private func disconnectedFlashTransportSummary() -> String {
         switch controlPageBoardFamily() {
         case .taishanPi:
-            return "请先连接 TaishanPi，或让开发板进入 Loader / USB ECM 后再执行镜像刷写。"
+            return "请先连接 TaishanPi，或让开发板进入 Loader / Maskrom / USB ECM 后再执行镜像刷写。"
         case .colorEasyPICO2:
             return "请先连接 RP2350 设备，或让开发板进入 RP2350 单 USB / BOOTSEL 后再执行刷写。"
         case .generic:
@@ -1850,7 +2293,7 @@ final class ToolkitViewModel: ObservableObject {
         }
         return ActionAvailabilityState(
             enabled: false,
-            reason: "当前未检测到可用的设备重启链路。请确认 SSH / 控制服务已恢复，或让开发板处于 Loader 恢复模式。"
+            reason: "当前未检测到可用的设备重启链路。请确认 SSH / 控制服务已恢复，或让开发板处于 Loader / Maskrom 恢复模式。"
         )
     }
 
@@ -1869,7 +2312,7 @@ final class ToolkitViewModel: ObservableObject {
 
         if controlPageBoardFamily() == .taishanPi {
             switch usbMode {
-            case "loader", "rockchip-other":
+            case "loader", "maskrom", "rockchip-other":
                 return .enabledState
             case "usb-ecm":
                 if status?.usbnet?.configured != true {
@@ -1878,12 +2321,12 @@ final class ToolkitViewModel: ObservableObject {
                         reason: "当前开发板仍处于 USB ECM 运行态，但主机 USB 网络尚未恢复完成。请先恢复 USB 网络后再刷写。"
                     )
                 }
-                if status?.board?.control_service == true {
+                if status?.board?.control_service == true || status?.board?.ssh_port_open == true {
                     return .enabledState
                 }
                 return ActionAvailabilityState(
                     enabled: false,
-                    reason: "当前开发板仍处于 USB ECM 运行态，但 USB 控制服务未响应。现有刷写链路无法自动切换到 Loader，直接刷写会超时。请先恢复控制服务，或手动让开发板进入 Loader 模式后再刷写。"
+                    reason: "当前开发板仍处于 USB ECM 运行态，但控制服务和 SSH 均不可用。现有刷写链路无法自动切换到 Loader，直接刷写会超时。请先恢复控制服务/SSH，或手动让开发板进入 Loader 模式后再刷写。"
                 )
             default:
                 return ActionAvailabilityState(
@@ -1919,13 +2362,18 @@ final class ToolkitViewModel: ObservableObject {
             switch usbMode {
             case "loader":
                 return "当前开发板已处于 Loader 模式，将直接执行刷写。"
+            case "maskrom":
+                return "当前开发板已处于 Maskrom 模式，刷写前会先通过 MiniLoaderAll.bin 拉起 Loader，再继续执行刷写。"
             case "rockchip-other":
                 return "当前已检测到 Rockchip USB 刷写链路，可直接执行刷写。"
             case "usb-ecm":
                 if status?.board?.control_service == true {
                     return "当前开发板处于 USB ECM 运行态，刷写前会先通过控制服务切换到 Loader。"
                 }
-                return "当前开发板处于 USB ECM 运行态，但控制服务未响应。请先恢复控制服务，或手动进入 Loader 后再刷写。"
+                if status?.board?.ssh_port_open == true {
+                    return "当前开发板处于 USB ECM 运行态，控制服务未响应，但 SSH 可用；刷写前会通过 SSH fallback 请求进入 Loader。"
+                }
+                return "当前开发板处于 USB ECM 运行态，但控制服务和 SSH 均不可用。请先恢复控制链路，或手动进入 Loader 后再刷写。"
             default:
                 return "请先让开发板进入可刷写状态后再执行镜像刷写。"
             }
@@ -1941,7 +2389,7 @@ final class ToolkitViewModel: ObservableObject {
 
     func flashTransportIndicatorColor() -> Color {
         let usbMode = (status?.usb?.mode ?? "").lowercased()
-        if usbMode == "loader" {
+        if usbMode == "loader" || usbMode == "maskrom" {
             return .blue
         }
         return flashTransportAvailabilityState().enabled ? .green : .orange
@@ -1951,7 +2399,6 @@ final class ToolkitViewModel: ObservableObject {
         actionAvailabilityTask?.cancel()
         actionAvailabilityTask = nil
 
-        let dockerReady = status?.host?.docker_daemon == true
         let usbMode = (status?.usb?.mode ?? "").lowercased()
         let usbControlReady = liveUSBControlReady()
         let rebootDeviceTransport = deviceRebootAvailabilityState()
@@ -1966,21 +2413,28 @@ final class ToolkitViewModel: ObservableObject {
         next[.authorizeKey] = usbControlReady
             ? .enabledState
             : ActionAvailabilityState(enabled: false, reason: "当前未检测到可用的 USB 控制服务。请确认开发板已联机并完成 USB ECM 初始化。")
-        next[.rebootLoader] = usbControlReady
+        let loaderSwitchReady = liveUSBOrSSHReady()
+        next[.rebootLoader] = loaderSwitchReady
             ? .enabledState
-            : ActionAvailabilityState(enabled: false, reason: "当前未检测到可用的 USB 控制服务。请确认开发板已联机并完成 USB ECM 初始化。")
+            : ActionAvailabilityState(enabled: false, reason: "当前未检测到可用的控制服务或 SSH。请确认开发板已联机并完成 USB ECM 初始化。")
         next[.rebootDevice] = rebootDeviceTransport
 
         for target in ["all", "boot", "rootfs", "userdata"] {
             next[.flash(target)] = flashTransportReady ? .enabledState : flashTransport
         }
 
-        next[.buildSync] = dockerReady
+        let selectedCompileReady = taishanPiDevelopmentMode == .macLLVM
+            ? developmentInstallStatus.llvmEnvironmentReady
+            : developmentInstallStatus.dockerEnvironmentReady
+        let compileNotReadyMessage = taishanPiDevelopmentMode == .macLLVM
+            ? "Mac LLVM 环境未就绪，无法执行构建同步。"
+            : "Linux GCC / Docker 环境未就绪，无法执行构建同步。"
+        next[.buildSync] = selectedCompileReady
             ? .enabledState
-            : ActionAvailabilityState(enabled: false, reason: "Docker 未就绪，无法执行构建同步。")
+            : ActionAvailabilityState(enabled: false, reason: compileNotReadyMessage)
 
-        if !dockerReady {
-            next[.buildSyncFlash] = ActionAvailabilityState(enabled: false, reason: "Docker 未就绪，无法执行构建同步刷写。")
+        if !selectedCompileReady {
+            next[.buildSyncFlash] = ActionAvailabilityState(enabled: false, reason: compileNotReadyMessage)
         } else if !flashTransportReady {
             next[.buildSyncFlash] = flashTransport
         } else {
@@ -2461,7 +2915,8 @@ final class ToolkitViewModel: ObservableObject {
         var payload: [String: Any] = [
             "image_source": source == .factory ? "factory" : "custom",
             "scope": scope,
-            "host_image_dir": hostImageDir
+            "host_image_dir": hostImageDir,
+            "build_mode": taishanPiDevelopmentMode.buildModeArgument
         ]
         if let boardID, !boardID.isEmpty {
             payload["board_id"] = boardID
@@ -2829,13 +3284,26 @@ final class ToolkitViewModel: ObservableObject {
         guard let runtimeStatus = agentStatus.runtime_status else {
             return nil
         }
+        let normalizedUSBNet = ToolkitStatus.USBNet(
+            iface: runtimeStatus.usbnet?.iface,
+            current_ip: runtimeStatus.usbnet?.current_ip,
+            expected_ip: runtimeStatus.usbnet?.expected_ip,
+            board_ip: runtimeStatus.usbnet?.board_ip,
+            slot: runtimeStatus.usbnet?.slot,
+            configured: agentStatus.usb_ecm_ready ?? runtimeStatus.usbnet?.configured
+        )
+        let normalizedBoard = ToolkitStatus.Board(
+            ping: runtimeStatus.board?.ping,
+            ssh_port_open: agentStatus.ssh_ready ?? runtimeStatus.board?.ssh_port_open,
+            control_service: agentStatus.control_service_ready ?? runtimeStatus.board?.control_service
+        )
         return ToolkitStatus(
             repo_root: runtimeStatus.repo_root,
             service: runtimeStatus.service,
             updated_at: agentStatus.updated_at ?? runtimeStatus.updated_at,
             usb: runtimeStatus.usb,
-            usbnet: runtimeStatus.usbnet,
-            board: runtimeStatus.board,
+            usbnet: normalizedUSBNet,
+            board: normalizedBoard,
             host: runtimeStatus.host,
             device: runtimeStatus.device,
             device_id: agentStatus.device_id ?? runtimeStatus.device_id,
@@ -2894,7 +3362,7 @@ final class ToolkitViewModel: ObservableObject {
 
             let entries = try parseRemoteBoardPluginEntries(data: data)
             let checkedAt = ISO8601DateFormatter().string(from: Date())
-            try FileManager.default.createDirectory(at: boardPluginsRootURL(), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: boardPluginStateRootURL(), withIntermediateDirectories: true)
             let cacheData = try JSONEncoder().encode(CachedBoardPluginCatalog(checked_at: checkedAt, boards: entries))
             try cacheData.write(to: boardPluginCatalogCacheURL(), options: .atomic)
             applyRemoteBoardPluginEntries(entries, checkedAt: checkedAt)
@@ -2947,12 +3415,17 @@ final class ToolkitViewModel: ObservableObject {
                 }
 
                 boardPluginOperations[board.id] = BoardPluginOperationState(kind: .installing, progress: 0.84, message: "安装插件")
-                let installRoot = boardPluginInstallRootURL(for: board.id)
-                if FileManager.default.fileExists(atPath: installRoot.path) {
-                    try FileManager.default.removeItem(at: installRoot)
+                let installRoots = boardPluginInstallRootURLs(for: board.id)
+                guard let installRoot = installRoots.first else {
+                    throw ToolkitGUIError.commandFailed("无法解析插件安装目录：\(board.id)")
                 }
-                try FileManager.default.createDirectory(at: installRoot.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try unzipBoardPluginArchive(zipURL: zipURL, destinationURL: installRoot)
+                for root in installRoots {
+                    if FileManager.default.fileExists(atPath: root.path) {
+                        try FileManager.default.removeItem(at: root)
+                    }
+                    try FileManager.default.createDirectory(at: root.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try unzipBoardPluginArchive(zipURL: zipURL, destinationURL: root)
+                }
 
                 boardPluginOperations[board.id] = BoardPluginOperationState(kind: .installing, progress: 0.93, message: "校验插件内容")
                 let metadata = try validateInstalledBoardPlugin(at: installRoot, expectedBoardID: pluginID, expectedVersion: version)
@@ -2966,9 +3439,10 @@ final class ToolkitViewModel: ObservableObject {
                 appendActivity(level: .success, title: "插件安装", message: "\(board.displayName) 插件安装完成", detail: "版本 \(version)")
                 refreshStatus(silent: true)
             } catch {
-                let installRoot = boardPluginInstallRootURL(for: board.id)
-                if FileManager.default.fileExists(atPath: installRoot.path) {
-                    try? FileManager.default.removeItem(at: installRoot)
+                for installRoot in boardPluginInstallRootURLs(for: board.id) {
+                    if FileManager.default.fileExists(atPath: installRoot.path) {
+                        try? FileManager.default.removeItem(at: installRoot)
+                    }
                 }
                 installedBoardPlugins.removeValue(forKey: board.id)
                 installedBoardPluginMetadata.removeValue(forKey: board.id)
@@ -2991,9 +3465,10 @@ final class ToolkitViewModel: ObservableObject {
         boardPluginOperations[board.id] = BoardPluginOperationState(kind: .deleting, progress: nil, message: "正在删除")
         Task {
             do {
-                let installRoot = boardPluginInstallRootURL(for: board.id)
-                if FileManager.default.fileExists(atPath: installRoot.path) {
-                    try FileManager.default.removeItem(at: installRoot)
+                for installRoot in boardPluginInstallRootURLs(for: board.id) {
+                    if FileManager.default.fileExists(atPath: installRoot.path) {
+                        try FileManager.default.removeItem(at: installRoot)
+                    }
                 }
                 installedBoardPlugins.removeValue(forKey: board.id)
                 let pluginID = pluginBoardID(forLocalBoardID: board.id) ?? board.id
@@ -3538,7 +4013,7 @@ final class ToolkitViewModel: ObservableObject {
         let result = try ProcessExecutor.runSync(
             executableURL: URL(fileURLWithPath: "/usr/bin/shasum"),
             arguments: ["-a", "256", fileURL.path],
-            currentDirectoryURL: boardPluginsRootURL(),
+            currentDirectoryURL: boardPluginStateRootURL(),
             environment: ProcessInfo.processInfo.environment
         )
         guard result.0 == 0 else {
@@ -3789,9 +4264,9 @@ final class ToolkitViewModel: ObservableObject {
     func imageDirURL(for source: FlashImageSource) -> URL {
         switch source {
         case .custom:
-            return customImageDirURL()
+            return taishanPiDevelopmentMode == .macLLVM ? macLLVMCustomImageDirURL() : linuxGCCCustomImageDirURL()
         case .factory:
-            return factoryImageDirURL()
+            return taishanPiDevelopmentMode == .macLLVM ? macLLVMFactoryImageDirURL() : linuxGCCFactoryImageDirURL()
         }
     }
 
@@ -3832,13 +4307,17 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func ensureFactoryImagesReady() async throws {
+        let imageDir = imageDirURL(for: .factory)
         let required = [
-            factoryImageDirURL().appendingPathComponent("parameter.txt").path,
-            factoryImageDirURL().appendingPathComponent("boot.img").path,
-            factoryImageDirURL().appendingPathComponent("userdata.img").path,
+            imageDir.appendingPathComponent("parameter.txt").path,
+            imageDir.appendingPathComponent("boot.img").path,
+            imageDir.appendingPathComponent("userdata.img").path,
         ]
         if required.allSatisfy({ FileManager.default.fileExists(atPath: $0) }) {
             return
+        }
+        if taishanPiDevelopmentMode == .macLLVM {
+            throw ToolkitGUIError.commandFailed("未找到 Mac LLVM 初始镜像：\(imageDir.path)。请先挂载或安装 Mac LLVM 离线环境包。")
         }
         _ = try await runLocalAgentRuntimeJobAndWait(
             actionID: "images-ensure-factory",
@@ -3858,7 +4337,7 @@ final class ToolkitViewModel: ObservableObject {
             next.rkflashtoolReady = host?.rkflashtool_built == true
             next.updatedAt = agentStatus.updated_at ?? ISO8601DateFormatter().string(from: Date())
 
-            let imageDir = factoryImageDirURL()
+            let imageDir = linuxGCCFactoryImageDirURL()
             let requiredHostImages = [
                 imageDir.appendingPathComponent("parameter.txt").path,
                 imageDir.appendingPathComponent("boot.img").path,
@@ -3870,6 +4349,117 @@ final class ToolkitViewModel: ObservableObject {
                 let volumeCheck = try await runSystemShell("docker volume inspect '\(officialVolumeName)' >/dev/null 2>&1")
                 next.releaseVolumeReady = volumeCheck.0 == 0
             }
+
+            let llvmSDKRoot = taishanPiLLVMSDKRootURL()
+            let portableReleaseRoot = taishanPiLLVMReleaseRootURL()
+            next.llvmSDKRoot = llvmSDKRoot.path
+            next.llvmSDKMounted = FileManager.default.fileExists(atPath: llvmSDKRoot.path)
+            next.llvmSDKCaseSensitive = volumeSupportsCaseSensitiveNames(at: llvmSDKRoot)
+            next.llvmEntryScriptsReady =
+                (
+                    FileManager.default.fileExists(atPath: llvmSDKRoot.appendingPathComponent("build-llvm.sh").path) &&
+                    FileManager.default.fileExists(atPath: llvmSDKRoot.appendingPathComponent("llvm-env.sh").path)
+                ) ||
+                (
+                    FileManager.default.fileExists(atPath: llvmSDKRoot.appendingPathComponent("scripts/portable-qmake.sh").path) &&
+                    FileManager.default.fileExists(atPath: llvmSDKRoot.appendingPathComponent("toolchain/qt6-rk3566-llvm-toolchain.cmake").path)
+                )
+            next.llvmCrossWrappersReady =
+                (
+                    FileManager.default.fileExists(atPath: llvmSDKRoot.appendingPathComponent(".llvm-cross", isDirectory: true).path) &&
+                    FileManager.default.fileExists(atPath: llvmSDKRoot.appendingPathComponent(".llvm-cross/bin", isDirectory: true).path)
+                ) ||
+                (
+                    FileManager.default.fileExists(atPath: llvmSDKRoot.appendingPathComponent("toolchain/llvm-cross", isDirectory: true).path) &&
+                    FileManager.default.fileExists(atPath: llvmSDKRoot.appendingPathComponent("toolchain/llvm-cross/bin/aarch64-linux-gnu-gcc").path)
+                )
+            next.llvmHostWrappersReady =
+                (
+                    FileManager.default.fileExists(atPath: llvmSDKRoot.appendingPathComponent(".llvm-host-tools", isDirectory: true).path) &&
+                    FileManager.default.fileExists(atPath: llvmSDKRoot.appendingPathComponent(".llvm-host-tools/bin", isDirectory: true).path)
+                ) ||
+                (
+                    FileManager.default.fileExists(atPath: llvmSDKRoot.appendingPathComponent("toolchain/host-tools", isDirectory: true).path) &&
+                    FileManager.default.fileExists(atPath: llvmSDKRoot.appendingPathComponent("toolchain/host-tools/bin/clang-aarch64-linux-gnu").path)
+                )
+            next.llvmClangReady = await executableAvailable(
+                candidatePaths: [
+                    llvmSDKRoot.appendingPathComponent("toolchain/host-tools/bin/clang-aarch64-linux-gnu").path,
+                    portableReleaseRoot.appendingPathComponent("toolchain/host-tools/bin/clang-aarch64-linux-gnu").path,
+                    "/opt/homebrew/opt/llvm/bin/clang",
+                    "/usr/local/opt/llvm/bin/clang"
+                ],
+                fallbackCommand: "clang"
+            )
+            next.llvmLLDReady = await executableAvailable(
+                candidatePaths: [
+                    "/opt/homebrew/opt/lld/bin/ld.lld",
+                    "/usr/local/opt/lld/bin/ld.lld",
+                    "/opt/homebrew/opt/llvm/bin/ld.lld",
+                    "/usr/local/opt/llvm/bin/ld.lld",
+                    llvmSDKRoot.appendingPathComponent("toolchain/llvm-cross/bin/aarch64-linux-gnu-gcc").path
+                ],
+                fallbackCommand: "ld.lld"
+            )
+            next.llvmObjcopyReady = await executableAvailable(
+                candidatePaths: [
+                    llvmSDKRoot.appendingPathComponent("toolchain/llvm-cross/bin/aarch64-linux-gnu-objcopy").path,
+                    llvmSDKRoot.appendingPathComponent(".llvm-cross/bin/aarch64-linux-gnu-objcopy").path,
+                    "/opt/homebrew/opt/llvm/bin/llvm-objcopy",
+                    "/usr/local/opt/llvm/bin/llvm-objcopy"
+                ],
+                fallbackCommand: "llvm-objcopy"
+            )
+            next.llvmReadelfReady = await executableAvailable(
+                candidatePaths: [
+                    llvmSDKRoot.appendingPathComponent("toolchain/llvm-cross/bin/aarch64-linux-gnu-readelf").path,
+                    llvmSDKRoot.appendingPathComponent(".llvm-cross/bin/aarch64-linux-gnu-readelf").path,
+                    "/opt/homebrew/opt/llvm/bin/llvm-readelf",
+                    "/usr/local/opt/llvm/bin/llvm-readelf"
+                ],
+                fallbackCommand: "llvm-readelf"
+            )
+            next.llvmPython3Ready = await executableAvailable(candidatePaths: [], fallbackCommand: "python3")
+            next.llvmDtcReady = await executableAvailable(
+                candidatePaths: [
+                    llvmSDKRoot.appendingPathComponent("toolchain/host-tools/bin/dtc").path,
+                    llvmSDKRoot.appendingPathComponent(".llvm-host-tools/bin/dtc").path,
+                    "/opt/homebrew/bin/dtc",
+                    "/usr/local/bin/dtc"
+                ],
+                fallbackCommand: "dtc"
+            )
+            next.llvmFakerootReady = await executableAvailable(
+                candidatePaths: [
+                    llvmSDKRoot.appendingPathComponent("toolchain/host/bin/fakeroot").path,
+                    "/opt/homebrew/bin/fakeroot",
+                    "/usr/local/bin/fakeroot"
+                ],
+                fallbackCommand: "fakeroot"
+            )
+            next.llvmMke2fsReady = await executableAvailable(
+                candidatePaths: [
+                    llvmSDKRoot.appendingPathComponent("toolchain/host/sbin/mke2fs").path,
+                    "/opt/homebrew/opt/e2fsprogs/sbin/mke2fs",
+                    "/usr/local/opt/e2fsprogs/sbin/mke2fs",
+                    "/opt/homebrew/sbin/mke2fs",
+                    "/usr/local/sbin/mke2fs"
+                ],
+                fallbackCommand: "mke2fs"
+            )
+            next.llvmTune2fsReady = await executableAvailable(
+                candidatePaths: [
+                    llvmSDKRoot.appendingPathComponent("toolchain/host/sbin/tune2fs").path,
+                    "/opt/homebrew/opt/e2fsprogs/sbin/tune2fs",
+                    "/usr/local/opt/e2fsprogs/sbin/tune2fs",
+                    "/opt/homebrew/sbin/tune2fs",
+                    "/usr/local/sbin/tune2fs"
+                ],
+                fallbackCommand: "tune2fs"
+            )
+            next.llvmFactoryImagesReady = directoryHasTaishanPiImageSet(macLLVMFactoryImageDirURL())
+            next.llvmCustomImagesReady = directoryHasTaishanPiImageSet(macLLVMCustomImageDirURL())
+            next.llvmBootProbeImagesReady = directoryHasTaishanPiImageSet(taishanPiLLVMBootProbeImageDirURL())
 
             let home = NSHomeDirectory()
             let codexCandidates = [
@@ -3899,6 +4489,8 @@ final class ToolkitViewModel: ObservableObject {
                 legacyOpenCodeCandidates.allSatisfy { FileManager.default.fileExists(atPath: $0) }
 
             developmentInstallStatus = next
+            autoSelectTaishanPiDevelopmentMode(using: next)
+            refreshActionAvailability()
         } catch {
             installerLastDetail = "环境状态刷新失败：\(error.localizedDescription)"
         }
@@ -3976,9 +4568,18 @@ final class ToolkitViewModel: ObservableObject {
             return nil
 
         case .buildSync:
+            if taishanPiDevelopmentMode == .macLLVM {
+                return actionAvailabilityState(for: precondition).reason
+            }
             return await localAgentOperationPreflightMessage(operationID: "docker_ready", boardID: route.boardID, variantID: route.variantID)
 
         case .buildSyncFlash:
+            if taishanPiDevelopmentMode == .macLLVM {
+                if let localMessage = actionAvailabilityState(for: precondition).reason {
+                    return localMessage
+                }
+                return await localAgentOperationPreflightMessage(operationID: "flash_transport", boardID: route.boardID, variantID: route.variantID)
+            }
             if let message = await localAgentOperationPreflightMessage(operationID: "docker_ready", boardID: route.boardID, variantID: route.variantID) {
                 return message
             }
@@ -4567,7 +5168,9 @@ final class ToolkitViewModel: ObservableObject {
         let transport = (status?.device?.transport_name ?? "").lowercased()
         let product = (status?.usb?.product ?? "").lowercased()
         return mode == "loader" ||
+            mode == "maskrom" ||
             transport.contains("loader") ||
+            transport.contains("maskrom") ||
             product.contains("download gadget")
     }
 
@@ -5391,7 +5994,100 @@ final class ToolkitViewModel: ObservableObject {
         lastRefreshErrorSignature = ""
     }
 
+    private func statusIsTaishanLoaderMode(_ status: ToolkitStatus) -> Bool {
+        let usbMode = (status.usb?.mode ?? "").lowercased()
+        let transport = (status.device?.transport_name ?? "").lowercased()
+        let product = (status.usb?.product ?? "").lowercased()
+        return usbMode == "loader" ||
+            usbMode == "maskrom" ||
+            transport.contains("loader") ||
+            transport.contains("maskrom") ||
+            product.contains("download gadget")
+    }
+
+    private func statusLooksTaishanOrTransitionCandidate(_ status: ToolkitStatus) -> Bool {
+        boardLogicFamily(status: status) == .taishanPi ||
+            boardLogicFamily(status: self.status) == .taishanPi ||
+            currentOperationRoute().boardID == "TaishanPi" ||
+            connectedBoardID == "TaishanPi" ||
+            preferredControlBoardID == "TaishanPi"
+    }
+
+    private func taishanLoaderTransitionStatus(from newStatus: ToolkitStatus) -> ToolkitStatus {
+        let current = self.status
+        let device = current?.device ?? newStatus.device
+        let devices = (current?.devices?.isEmpty == false) ? current?.devices : newStatus.devices
+        let message = taishanLoaderTransitionHint
+        let repoRoot = newStatus.repo_root ?? current?.repo_root
+        let service = newStatus.service ?? current?.service
+        let usbProduct = newStatus.usb?.product ?? current?.usb?.product
+        let usbPID = newStatus.usb?.pid ?? current?.usb?.pid
+        let usbnet = ToolkitStatus.USBNet(
+            iface: newStatus.usbnet?.iface ?? current?.usbnet?.iface,
+            current_ip: newStatus.usbnet?.current_ip ?? current?.usbnet?.current_ip,
+            expected_ip: newStatus.usbnet?.expected_ip ?? current?.usbnet?.expected_ip,
+            board_ip: newStatus.usbnet?.board_ip ?? current?.usbnet?.board_ip,
+            slot: newStatus.usbnet?.slot ?? current?.usbnet?.slot,
+            configured: false
+        )
+        let deviceID = current?.device_id ?? newStatus.device_id
+        let activeDeviceID = current?.active_device_id ?? newStatus.active_device_id
+        return ToolkitStatus(
+            repo_root: repoRoot,
+            service: service,
+            updated_at: newStatus.updated_at,
+            usb: .init(
+                mode: "detecting",
+                product: usbProduct,
+                pid: usbPID
+            ),
+            usbnet: usbnet,
+            board: .init(
+                ping: false,
+                ssh_port_open: false,
+                control_service: false
+            ),
+            host: newStatus.host ?? current?.host,
+            device: device,
+            device_id: deviceID,
+            active_device_id: activeDeviceID,
+            devices: devices,
+            rp2350: nil,
+            summary: message,
+            device_summary: message
+        )
+    }
+
+    private func markTaishanLoaderTransitionStarted(duration: TimeInterval = 36) {
+        taishanLoaderTransitionUntil = Date().addingTimeInterval(duration)
+        if let current = status {
+            let transitioning = taishanLoaderTransitionStatus(from: current)
+            status = transitioning
+            lastSnapshot = makeSnapshot(from: transitioning)
+        }
+    }
+
+    private func clearTaishanLoaderTransition() {
+        taishanLoaderTransitionUntil = nil
+    }
+
+    private func waitForPendingTaskVisibleSince(_ startedAt: Date, minimumDuration: TimeInterval = 1.2) async {
+        let remaining = minimumDuration - Date().timeIntervalSince(startedAt)
+        guard remaining > 0 else {
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(Int(remaining * 1000)))
+    }
+
     func stabilizedStatus(from status: ToolkitStatus) -> ToolkitStatus {
+        if taishanLoaderTransitionActive, statusLooksTaishanOrTransitionCandidate(status) {
+            if statusIsTaishanLoaderMode(status) {
+                clearTaishanLoaderTransition()
+                return status
+            }
+            return taishanLoaderTransitionStatus(from: status)
+        }
+
         switch boardLogicFamily(status: status) {
         case .taishanPi, .colorEasyPICO2:
             return status
@@ -5441,6 +6137,7 @@ final class ToolkitViewModel: ObservableObject {
         startLocalAgentMonitor()
         Task {
             refreshStatus(silent: true)
+            await refreshDevelopmentInstallStatus()
         }
     }
 
@@ -5450,25 +6147,36 @@ final class ToolkitViewModel: ObservableObject {
         }
         if reason == "usb-removed" {
             lastLocalUSBRemovedAt = Date()
-            boardStateGraceUntil = nil
-            stopBoardMonitoring()
-            resetAutomaticUSBNetRepairState(cancelTask: true)
-            if onlineConnectedDeviceCount <= 1 {
-                suppressConnectedAgentStatusUntil = Date().addingTimeInterval(4.5)
-                applyDisconnectedUSBState()
+            if taishanLoaderTransitionActive {
+                boardStateGraceUntil = Date().addingTimeInterval(8)
+                applyTransientUSBStateIfNeeded()
+            } else {
+                boardStateGraceUntil = nil
+                stopBoardMonitoring()
+                resetAutomaticUSBNetRepairState(cancelTask: true)
+                if onlineConnectedDeviceCount <= 1 {
+                    suppressConnectedAgentStatusUntil = Date().addingTimeInterval(4.5)
+                    applyDisconnectedUSBState()
+                }
             }
         } else if reason == "usb-added" {
             lastLocalUSBRemovedAt = nil
             suppressConnectedAgentStatusUntil = nil
             let liveBoardID = currentLiveCandidate?.boardID ?? status?.device?.board_id
-            if isRP2350BoardID(liveBoardID) {
+            if taishanLoaderTransitionActive {
+                boardStateGraceUntil = Date().addingTimeInterval(8)
+                applyTransientUSBStateIfNeeded()
+            } else if isRP2350BoardID(liveBoardID) {
                 boardStateGraceUntil = nil
             } else {
                 boardStateGraceUntil = Date().addingTimeInterval(8)
                 applyTransientUSBStateIfNeeded()
             }
         } else if reason == "network", status?.usb?.mode == "usb-ecm" {
-            if onlineConnectedDeviceCount <= 1, currentUSBECMInterfaceMissing() {
+            if taishanLoaderTransitionActive {
+                boardStateGraceUntil = Date().addingTimeInterval(5)
+                applyTransientUSBStateIfNeeded()
+            } else if onlineConnectedDeviceCount <= 1, currentUSBECMInterfaceMissing() {
                 lastLocalUSBRemovedAt = Date()
                 suppressConnectedAgentStatusUntil = Date().addingTimeInterval(4.5)
                 boardStateGraceUntil = nil
@@ -5766,18 +6474,29 @@ final class ToolkitViewModel: ObservableObject {
             }
             await ensureLocalAgentStartedIfNeeded()
             var localAgentApplied = false
-            if let agentStatus = try? await fetchLocalAgentStatusSummary() {
+            var statusFetchError: Error?
+            do {
+                let agentStatus = try await fetchLocalAgentStatusSummary()
                 if !self.shouldIgnoreStaleConnectedAgentStatus(agentStatus) {
                     self.applyLocalAgentStatusSummary(agentStatus, silent: true)
                     localAgentApplied = true
                 }
-            } else {
-                self.setLocalAgentRunning(false)
+            } catch {
+                statusFetchError = error
+                if (try? await self.fetchLocalAgentHealthz()) != nil {
+                    self.setLocalAgentRunning(true)
+                } else {
+                    self.setLocalAgentRunning(false)
+                }
             }
             if !localAgentApplied {
-                let message = "后台状态探测失败，本次保留当前页面状态。"
+                let message = self.localAgentRunning
+                    ? "本地 DBT Agent 在线，但状态刷新暂时超时，本次保留当前页面状态。"
+                    : "后台状态探测失败，本次保留当前页面状态。"
                 if self.status == nil {
-                    let fallbackMessage = self.localAgentUnavailableUserMessage()
+                    let fallbackMessage = self.localAgentRunning
+                        ? "本地 DBT Agent 在线，正在刷新开发板状态"
+                        : self.localAgentUnavailableUserMessage()
                     let fallbackStatus = self.mergedStatus(
                         summary: fallbackMessage,
                         deviceSummary: fallbackMessage,
@@ -5786,7 +6505,7 @@ final class ToolkitViewModel: ObservableObject {
                     self.applyStatusUpdate(fallbackStatus, silent: true)
                 } else {
                     self.notifyBackgroundStatusFailureIfNeeded(message)
-                    self.appendActivity(level: .warning, title: "状态探测", message: message, updateSummary: false)
+                    self.appendActivity(level: .warning, title: "状态探测", message: message, detail: statusFetchError?.localizedDescription, updateSummary: false)
                 }
             }
         }
@@ -5908,18 +6627,60 @@ final class ToolkitViewModel: ObservableObject {
 
     func ensureUSBNet() {
         Task {
+            let title = "USB 网络"
             if let message = await validatePrecondition(.ensureUSBNet) {
                 presentInlineError(message)
-                appendActivity(level: .warning, title: "USB 网络", message: message)
+                appendActivity(level: .warning, title: title, message: message)
                 return
             }
-            runManagedAction(
-                title: "USB 网络",
-                successMessage: "恢复任务已提交",
-                localArgs: ["usbnet", "ensure"],
-                asyncTask: true
-            )
+            busy = true
+            pendingTaskTitle = title
+            clearInlineError()
+            appendActivity(level: .info, title: title, message: "正在尝试恢复主机 USB 网络")
+            do {
+                let task = try await runLocalAgentRuntimeJobAndWait(
+                    actionID: "usbnet-ensure",
+                    title: title,
+                    arguments: ["usbnet", "ensure"],
+                    timeout: 20
+                )
+                pendingTaskTitle = ""
+                busy = false
+                appendActivity(
+                    level: .success,
+                    title: title,
+                    message: "主机 USB 网络已恢复",
+                    detail: task.output_tail ?? task.log_path
+                )
+                startTransitionWatch(reason: "network", duration: 14, step: 1.0)
+                refreshStatus(silent: true)
+            } catch {
+                pendingTaskTitle = ""
+                busy = false
+                let detail = error.localizedDescription
+                if usbNetRecoveryNeedsPrivilegedHelper(detail) {
+                    appendActivity(
+                        level: .info,
+                        title: title,
+                        message: "恢复主机 USB 网络需要管理员授权，正在安装网络权限",
+                        detail: detail
+                    )
+                    installUSBNetHelper()
+                    return
+                }
+                presentInlineError(detail)
+                appendActivity(level: .error, title: title, message: "恢复失败", detail: detail)
+            }
         }
+    }
+
+    private func usbNetRecoveryNeedsPrivilegedHelper(_ detail: String) -> Bool {
+        let normalized = detail.lowercased()
+        return normalized.contains("requires root")
+            || normalized.contains("privileged usb helper")
+            || normalized.contains("run with sudo")
+            || normalized.contains("a password is required")
+            || normalized.contains("sudo")
     }
 
     func installUSBNetHelper() {
@@ -5973,7 +6734,7 @@ final class ToolkitViewModel: ObservableObject {
         runManagedAction(
             title: "发布环境检查",
             successMessage: "检查任务已提交",
-            localArgs: ["release", "check-env"],
+            localArgs: ["release", "check-env"] + taishanPiBuildModeArguments(),
             asyncTask: true
         )
     }
@@ -5983,7 +6744,7 @@ final class ToolkitViewModel: ObservableObject {
         runManagedAction(
             title: "发布环境全量安装",
             successMessage: "全量安装任务已提交",
-            localArgs: ["release", "install-environment"],
+            localArgs: ["release", "install-environment"] + taishanPiBuildModeArguments(),
             asyncTask: true
         )
     }
@@ -6010,7 +6771,7 @@ final class ToolkitViewModel: ObservableObject {
         runManagedAction(
             title: "发布环境本地安装",
             successMessage: "本地安装任务已提交",
-            localArgs: ["release", "install-environment", "--artifacts-dir", trimmed],
+            localArgs: ["release", "install-environment", "--artifacts-dir", trimmed] + taishanPiBuildModeArguments(),
             asyncTask: true
         )
     }
@@ -6161,7 +6922,7 @@ final class ToolkitViewModel: ObservableObject {
         runManagedAction(
             title: "初始镜像更新",
             successMessage: "初始镜像更新任务已提交",
-            localArgs: ["release", "update-images"],
+            localArgs: ["release", "update-images"] + taishanPiBuildModeArguments(),
             asyncTask: true
         )
     }
@@ -6210,7 +6971,7 @@ final class ToolkitViewModel: ObservableObject {
         runManagedAction(
             title: "官方镜像安装",
             successMessage: "官方镜像构建任务已提交",
-            localArgs: ["release", "build-image"],
+            localArgs: ["release", "build-image"] + taishanPiBuildModeArguments(),
             asyncTask: true
         )
     }
@@ -6221,7 +6982,7 @@ final class ToolkitViewModel: ObservableObject {
         runManagedAction(
             title: title,
             successMessage: "\(title)初始化任务已提交",
-            localArgs: ["release", "seed-volume", "--profile", profile],
+            localArgs: ["release", "seed-volume", "--profile", profile] + taishanPiBuildModeArguments(),
             asyncTask: true
         )
     }
@@ -6244,32 +7005,46 @@ final class ToolkitViewModel: ObservableObject {
 
     func rebootLoader() {
         Task {
+            let title = "切换 Loader"
+            let pendingStartedAt = Date()
+            busy = true
+            pendingTaskTitle = title
+            clearInlineError()
+            appendActivity(level: .info, title: title, message: "正在确认控制服务或 SSH 链路")
+            defer { busy = false }
+
             if let message = await validatePrecondition(.rebootLoader) {
+                await waitForPendingTaskVisibleSince(pendingStartedAt)
+                pendingTaskTitle = ""
                 presentInlineError(message)
-                appendActivity(level: .warning, title: "切换 Loader", message: message)
+                appendActivity(level: .warning, title: title, message: message)
                 return
             }
-            let title = "切换 Loader"
             let route = currentOperationRoute()
-            busy = true
-            defer { busy = false }
             do {
+                appendActivity(level: .info, title: title, message: "控制链路已就绪，正在提交任务")
                 await ensureLocalAgentStartedIfNeeded()
                 guard localAgentRunning else {
                     throw ToolkitGUIError.commandFailed(localAgentUnavailableUserMessage())
                 }
-                clearInlineError()
                 let response = try await postLocalAgentRebootJob(
                     target: "loader",
                     boardID: route.boardID,
-                    variantID: route.variantID
+                    variantID: route.variantID,
+                    deviceID: route.deviceID
                 )
+                markTaishanLoaderTransitionStarted(duration: 36)
+                await waitForPendingTaskVisibleSince(pendingStartedAt)
+                pendingTaskTitle = ""
                 appendActivity(level: .info, title: title, message: "任务已启动", detail: response.task?.log_path)
                 if let taskID = response.task?.id {
                     pollTaskInBackground(taskID, title: title)
+                    startTransitionWatch(reason: title, duration: 24, step: 1.0)
                 }
             } catch {
                 let detail = error.localizedDescription
+                await waitForPendingTaskVisibleSince(pendingStartedAt)
+                pendingTaskTitle = ""
                 presentInlineError(detail)
                 appendActivity(level: .error, title: title, message: "执行失败", detail: detail)
             }
@@ -6391,7 +7166,7 @@ final class ToolkitViewModel: ObservableObject {
                 let response = try await postLocalAgentRuntimeJob(
                     actionID: "dev-build-sync",
                     title: "开发版构建",
-                    arguments: ["dev", "build-sync"]
+                    arguments: ["dev", "build-sync"] + taishanPiBuildModeArguments()
                 )
                 pendingTaskTitle = ""
                 currentTask = response.task
@@ -6430,7 +7205,7 @@ final class ToolkitViewModel: ObservableObject {
                 let response = try await postLocalAgentRuntimeJob(
                     actionID: "dev-build-sync-flash",
                     title: "开发版构建并刷写",
-                    arguments: ["dev", "build-sync-flash"]
+                    arguments: ["dev", "build-sync-flash"] + taishanPiBuildModeArguments()
                 )
                 pendingTaskTitle = ""
                 currentTask = response.task
@@ -6882,15 +7657,27 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     private func validateLocalArtifactsDirectory(at path: String) async -> LocalArtifactValidationState {
+        struct ArtifactProfileManifest: Decodable {
+            let official_image: String?
+            let host_images: String?
+            let official_workspace: String?
+            let qt_host_tools: String?
+            let llvm_release_bundle: String?
+        }
+
         struct ArtifactManifest: Decodable {
             let official_image: String?
             let host_images: String?
             let official_workspace: String?
             let qt_host_tools: String?
+            let llvm_release_bundle: String?
             let official_image_size_bytes: Int64?
             let host_images_size_bytes: Int64?
             let official_workspace_size_bytes: Int64?
             let qt_host_tools_size_bytes: Int64?
+            let llvm_release_bundle_size_bytes: Int64?
+            let docker: ArtifactProfileManifest?
+            let local_llvm: ArtifactProfileManifest?
         }
 
         let directoryURL = URL(fileURLWithPath: path)
@@ -6899,6 +7686,7 @@ final class ToolkitViewModel: ObservableObject {
         let directoryEntries = (try? fileManager.contentsOfDirectory(atPath: path).sorted()) ?? []
         var items: [LocalArtifactValidationItem] = []
         var manifest: ArtifactManifest?
+        let selectedMode = taishanPiDevelopmentMode
 
         if fileManager.fileExists(atPath: manifestURL.path) {
             do {
@@ -6929,14 +7717,21 @@ final class ToolkitViewModel: ObservableObject {
 
         let checks: [(title: String, required: Bool, names: [String], expectedSize: Int64?)] = {
             var list: [(String, Bool, [String], Int64?)] = []
-            let imageCandidates = manifest?.official_image.map { [$0] } ?? []
-            let hostImageCandidates = manifest?.host_images.map { [$0] } ?? []
-            let workspaceCandidates = manifest?.official_workspace.map { [$0] } ?? []
-            let qtCandidates = manifest?.qt_host_tools.map { [$0] } ?? []
-            list.append(("共享镜像包", true, imageCandidates.isEmpty ? ["tspi-rk356x-env-*.tar.gz"] : imageCandidates, manifest?.official_image_size_bytes))
-            list.append(("初始镜像包", true, hostImageCandidates.isEmpty ? ["tspi-img-*.tar.gz"] : hostImageCandidates, manifest?.host_images_size_bytes))
-            list.append(("发布工作区包", true, workspaceCandidates.isEmpty ? ["official-workspace-*.tar.gz"] : workspaceCandidates, manifest?.official_workspace_size_bytes))
-            list.append(("Qt 编译环境包", false, qtCandidates.isEmpty ? ["qt6Host-*.tar.gz", "qt6host-*.tar.gz"] : qtCandidates, manifest?.qt_host_tools_size_bytes))
+            let profile = selectedMode == .macLLVM ? manifest?.local_llvm : manifest?.docker
+            let imageCandidates = (profile?.official_image ?? manifest?.official_image).map { [$0] } ?? []
+            let hostImageCandidates = (profile?.host_images ?? manifest?.host_images).map { [$0] } ?? []
+            let workspaceCandidates = (profile?.official_workspace ?? profile?.llvm_release_bundle ?? manifest?.official_workspace ?? manifest?.llvm_release_bundle).map { [$0] } ?? []
+            let qtCandidates = (profile?.qt_host_tools ?? manifest?.qt_host_tools).map { [$0] } ?? []
+            if selectedMode == .macLLVM {
+                list.append(("LLVM 镜像包", false, hostImageCandidates.isEmpty ? ["tspi-rk3566-llvm-images-*.tar.gz", "tspi-img-llvm-*.tar.gz", "tspi-img-*.tar.gz"] : hostImageCandidates, manifest?.host_images_size_bytes))
+                list.append(("LLVM 发布/工作区包", true, workspaceCandidates.isEmpty ? ["tspi-rk3566-llvm-release-minimal-*.tar.gz", "tspi-rk3566-llvm-release-*.tar.gz", "llvm-workspace-*.tar.gz", "official-workspace-llvm-*.tar.gz"] : workspaceCandidates, manifest?.llvm_release_bundle_size_bytes ?? manifest?.official_workspace_size_bytes))
+                list.append(("LLVM Qt 编译环境包", false, qtCandidates.isEmpty ? ["qt6-rk3566-llvm-*.tar.gz", "qt6Host-llvm-*.tar.gz", "qt6Host-*.tar.gz", "qt6host-*.tar.gz"] : qtCandidates, manifest?.qt_host_tools_size_bytes))
+            } else {
+                list.append(("共享镜像包", true, imageCandidates.isEmpty ? ["tspi-rk356x-env-*.tar.gz"] : imageCandidates, manifest?.official_image_size_bytes))
+                list.append(("初始镜像包", true, hostImageCandidates.isEmpty ? ["tspi-img-*.tar.gz"] : hostImageCandidates, manifest?.host_images_size_bytes))
+                list.append(("发布工作区包", true, workspaceCandidates.isEmpty ? ["official-workspace-*.tar.gz"] : workspaceCandidates, manifest?.official_workspace_size_bytes))
+                list.append(("Qt 编译环境包", false, qtCandidates.isEmpty ? ["qt6Host-*.tar.gz", "qt6host-*.tar.gz"] : qtCandidates, manifest?.qt_host_tools_size_bytes))
+            }
             return list
         }()
 
@@ -7000,28 +7795,40 @@ final class ToolkitViewModel: ObservableObject {
             checking: false,
             checked: true,
             ready: ready,
-            summary: ready ? "本地资源校验通过" : "本地资源校验未通过",
+            summary: ready ? "\(selectedMode.title) 本地资源校验通过" : "\(selectedMode.title) 本地资源校验未通过",
             items: items,
             failureDetail: failureLines
         )
     }
 
     var fullDevelopmentEnvironmentReady: Bool {
-        developmentInstallStatus.dockerReady &&
-        developmentInstallStatus.officialImageReady &&
-        developmentInstallStatus.releaseVolumeReady &&
-        developmentInstallStatus.hostImagesReady &&
-        developmentInstallStatus.rkflashtoolReady
+        switch taishanPiDevelopmentMode {
+        case .dockerLinux:
+            developmentInstallStatus.dockerEnvironmentReady
+        case .macLLVM:
+            developmentInstallStatus.llvmEnvironmentReady
+        }
     }
 
     var developmentInstallHeadline: String {
-        if fullDevelopmentEnvironmentReady {
-            return "发布环境已完整安装"
+        switch taishanPiDevelopmentMode {
+        case .dockerLinux:
+            if developmentInstallStatus.dockerEnvironmentReady {
+                return "Linux GCC 环境已完整就绪"
+            }
+            if developmentInstallStatus.dockerEnvironmentPartial {
+                return "Linux GCC 环境部分已就绪"
+            }
+            return "Linux GCC 环境未就绪"
+        case .macLLVM:
+            if developmentInstallStatus.llvmEnvironmentReady {
+                return "Mac LLVM 环境已完整就绪"
+            }
+            if developmentInstallStatus.llvmEnvironmentPartial {
+                return "Mac LLVM 环境部分已就绪"
+            }
+            return "Mac LLVM 环境未就绪"
         }
-        if developmentInstallStatus.dockerReady || developmentInstallStatus.officialImageReady || developmentInstallStatus.releaseVolumeReady || developmentInstallStatus.hostImagesReady {
-            return "发布环境部分已安装"
-        }
-        return "发布环境尚未安装"
     }
 
     var updateConfigured: Bool {
@@ -7155,6 +7962,15 @@ final class ToolkitViewModel: ObservableObject {
 
     var detectedBoard: SupportedBoard? {
         supportedBoard(for: connectedBoardID)
+    }
+
+    var controlPageIsTaishanPi: Bool {
+        let boardID = preferredControlBoardID ??
+            connectedBoardID ??
+            currentControlCandidate?.boardID ??
+            liveDetectedBoard?.id ??
+            status?.device?.board_id
+        return boardMatches(boardID, targetBoardID: "TaishanPi")
     }
 
     var preferredControlBoard: SupportedBoard? {
@@ -7397,6 +8213,18 @@ final class ToolkitViewModel: ObservableObject {
         return detectedHardwareDisplayName ?? "开发板"
     }
 
+    var controlPageManufacturerText: String? {
+        if let manufacturer = currentControlCandidate?.manufacturer,
+           !manufacturer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return manufacturer
+        }
+        let board = detectedBoard ??
+            supportedBoard(for: preferredControlBoardID) ??
+            supportedBoard(for: connectedBoardID) ??
+            liveDetectedBoard
+        return board?.manufacturer
+    }
+
     var isWaitingForHardware: Bool {
         detectedBoardCandidates.isEmpty
     }
@@ -7407,10 +8235,16 @@ final class ToolkitViewModel: ObservableObject {
 
     var heroState: ToolkitHeroState {
         if !isShowingBoardCatalog {
+            if currentControlCandidate != nil || controlPageHasMatchingLiveSignal() {
+                return .deviceReady
+            }
+            if preferredControlBoardID != nil || connectedBoardID != nil || detectedBoard != nil {
+                return .deviceClose
+            }
             return .pluginHub
         }
         guard heroTargetBoard != nil else {
-            return .pluginHub
+            return currentControllableLiveCandidate != nil ? .deviceReady : .pluginHub
         }
         return heroTargetMatchesLiveBoard ? .deviceReady : .deviceClose
     }
@@ -7451,7 +8285,11 @@ final class ToolkitViewModel: ObservableObject {
 
     var headerSubtitle: String {
         if !isShowingBoardCatalog {
-            return "点击返回初始化列表页面"
+            if let manufacturer = controlPageManufacturerText,
+               !manufacturer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "\(controlPageBoardTitle) · \(manufacturer)"
+            }
+            return controlPageBoardTitle
         }
         if activeControlDeviceCandidates.count > 1 {
             let current = currentControlCandidate?.conciseLabel ?? detectedHardwareDisplayName ?? "当前设备"
@@ -7483,6 +8321,10 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     var deviceConnectionText: String {
+        if taishanLoaderTransitionActive,
+           controlPageBoardFamily() == .taishanPi || boardLogicFamily(status: status) == .taishanPi {
+            return "正在进入 Loader"
+        }
         if let targetBoardID = controlPageTargetBoardID {
             if isRP2350BoardID(targetBoardID) {
                 guard controlPageHasMatchingLiveSignal() else {
@@ -7505,6 +8347,8 @@ final class ToolkitViewModel: ObservableObject {
                 switch mode {
                 case "loader":
                     return "Loader 模式"
+                case "maskrom":
+                    return "Maskrom 模式"
                 case "usb-ecm":
                     return status?.usbnet?.configured == true ? "USB 网口已连接" : "USB 网口待配置"
                 case "rockchip-other":
@@ -7540,6 +8384,8 @@ final class ToolkitViewModel: ObservableObject {
         switch mode {
         case "loader":
             return "Loader 模式"
+        case "maskrom":
+            return "Maskrom 模式"
         case "usb-ecm":
             return status?.usbnet?.configured == true ? "USB 网口已连接" : "USB 网口待配置"
         case "rockchip-other":
@@ -7554,6 +8400,10 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     var deviceReachabilityText: String {
+        if taishanLoaderTransitionActive,
+           controlPageBoardFamily() == .taishanPi || boardLogicFamily(status: status) == .taishanPi {
+            return taishanLoaderTransitionHint
+        }
         if let targetBoardID = controlPageTargetBoardID {
             if isRP2350BoardID(targetBoardID) {
                 guard controlPageHasMatchingLiveSignal() else {
@@ -7586,6 +8436,9 @@ final class ToolkitViewModel: ObservableObject {
                 }
                 if (status?.usb?.mode ?? "").lowercased() == "loader" {
                     return "Loader 已就绪，可直接刷写"
+                }
+                if (status?.usb?.mode ?? "").lowercased() == "maskrom" {
+                    return "Maskrom 已就绪，将先拉起 Loader"
                 }
                 if (status?.usb?.mode ?? "").lowercased() == "usb-ecm" {
                     return status?.usbnet?.configured == true ? "USB 网口已连接" : "USB 网口待配置"
@@ -7630,6 +8483,9 @@ final class ToolkitViewModel: ObservableObject {
         }
         if status?.usb?.mode == "loader" {
             return "Loader 已就绪，可直接刷写"
+        }
+        if status?.usb?.mode == "maskrom" {
+            return "Maskrom 已就绪，将先拉起 Loader"
         }
         return "已检测到设备"
     }
@@ -7709,7 +8565,7 @@ final class ToolkitViewModel: ObservableObject {
             }
         }
         switch status?.usb?.mode ?? "absent" {
-        case "loader":
+        case "loader", "maskrom":
             return .blue
         case "usb-ecm":
             if taishanUSBECMTransportOnly() {
@@ -8083,7 +8939,7 @@ struct OverviewTab: View {
 
     private var taishanBoardResponseHelpText: String {
         if taishanTransportOnlyWarning {
-            return "当前仅检测到 USB ECM 枚举，板端没有响应 SSH / 控制服务。"
+            return "当前仅检测到 USB ECM 枚举，板端没有响应 Ping / SSH / 控制服务。"
         }
         return taishanBoardResponsive ? "板端运行态链路可用" : "当前未检测到板端有效响应"
     }
@@ -8094,6 +8950,64 @@ struct OverviewTab: View {
 
     private var taishanControlReady: Bool {
         taishanConnected && vm.status?.board?.control_service == true
+    }
+
+    private var taishanControlChannelReady: Bool {
+        taishanControlReady || taishanSSHReady
+    }
+
+    private var taishanControlChannelText: String {
+        taishanControlChannelReady ? "正常" : "异常"
+    }
+
+    private var taishanControlChannelHelpText: String {
+        if taishanControlReady {
+            return "USB 控制服务正常，可直接请求重启、进入 Loader 或执行刷写前置切换。"
+        }
+        if taishanSSHReady {
+            return "USB 控制服务未响应，但 SSH 正常；重启、切换 Loader 和刷写前置切换会使用 SSH fallback。"
+        }
+        return "控制服务和 SSH 均不可用，运行态控制操作会被阻止。"
+    }
+
+    private var taishanCompileEnvironmentReady: Bool {
+        switch vm.taishanPiDevelopmentMode {
+        case .dockerLinux:
+            return vm.developmentInstallStatus.dockerEnvironmentReady
+        case .macLLVM:
+            return vm.developmentInstallStatus.llvmEnvironmentReady
+        }
+    }
+
+    private var taishanCompileEnvironmentText: String {
+        switch vm.taishanPiDevelopmentMode {
+        case .dockerLinux:
+            return vm.developmentInstallStatus.dockerEnvironmentReady ? "Linux GCC 正常" : "Linux GCC 异常"
+        case .macLLVM:
+            return vm.developmentInstallStatus.llvmEnvironmentReady ? "Mac LLVM 正常" : "Mac LLVM 异常"
+        }
+    }
+
+    private var taishanCompileEnvironmentHelpText: String {
+        switch vm.taishanPiDevelopmentMode {
+        case .dockerLinux:
+            return vm.developmentInstallStatus.dockerEnvironmentReady
+                ? "当前选择 Linux GCC，已检测到 Docker、共享镜像、发布工作区、镜像缓存和刷写工具。"
+                : "当前选择 Linux GCC，需要 Docker、共享镜像、发布工作区、镜像缓存和刷写工具全部就绪。"
+        case .macLLVM:
+            return vm.developmentInstallStatus.llvmEnvironmentReady
+                ? "当前选择 Mac LLVM，已检测到本地 LLVM/Qt 工具链和 Mac LLVM 初始镜像；用户镜像会在构建同步后进入独立目录。"
+                : "当前选择 Mac LLVM，需要本地 LLVM/Qt 工具链和 Mac LLVM 初始镜像就绪；此模式不要求 Docker。"
+        }
+    }
+
+    private var checkHostSubtitle: String {
+        switch vm.taishanPiDevelopmentMode {
+        case .dockerLinux:
+            return "检查 Linux GCC、Docker、镜像和刷机工具状态"
+        case .macLLVM:
+            return "检查 Mac LLVM、本地镜像和刷机工具状态"
+        }
     }
 
     var body: some View {
@@ -8171,16 +9085,28 @@ struct OverviewTab: View {
                     actionLabel: "打开",
                     onTap: taishanSSHReady ? { vm.promptOpenSSHTerminal() } : nil
                 )
-                StatusCard(title: "控制服务", value: taishanControlReady ? "正常" : "未响应", ok: taishanControlReady, symbol: "switch.2")
-                StatusCard(title: "Docker", value: vm.status?.host?.docker_daemon == true ? "已就绪" : "未启动", ok: vm.status?.host?.docker_daemon == true, symbol: "shippingbox")
+                StatusCard(
+                    title: "控制链路",
+                    value: taishanControlChannelText,
+                    ok: taishanControlChannelReady,
+                    symbol: "switch.2",
+                    helpText: taishanControlChannelHelpText
+                )
+                StatusCard(
+                    title: "编译环境",
+                    value: taishanCompileEnvironmentText,
+                    ok: taishanCompileEnvironmentReady,
+                    symbol: vm.taishanPiDevelopmentMode == .macLLVM ? "apple.terminal" : "shippingbox",
+                    helpText: taishanCompileEnvironmentHelpText
+                )
             }
 
             GroupBox("连接与准备") {
                 LazyVGrid(columns: actionColumns, spacing: 8) {
-                    ActionTile(title: "主机预检", subtitle: "检查 Docker、镜像和刷机工具状态", enabled: checkHostState.enabled, disabledReason: checkHostState.reason, symbol: "stethoscope") { vm.checkHost() }
+                    ActionTile(title: "主机预检", subtitle: checkHostSubtitle, enabled: checkHostState.enabled, disabledReason: checkHostState.reason, symbol: "stethoscope") { vm.checkHost() }
                     ActionTile(title: "恢复 USB 网络", subtitle: "修复 USB ECM 重枚举后的主机静态 IP", enabled: ensureUSBNetState.enabled, disabledReason: ensureUSBNetState.reason, symbol: "point.3.filled.connected.trianglepath.dotted") { vm.ensureUSBNet() }
                     ActionTile(title: "授权 SSH", subtitle: "把当前电脑公钥写入开发板", enabled: authorizeKeyState.enabled, disabledReason: authorizeKeyState.reason, symbol: "key.horizontal") { vm.authorizeKey() }
-                    ActionTile(title: "切换 Loader", subtitle: "通过 usb0 控制服务让开发板进入 Loader", enabled: rebootLoaderState.enabled, disabledReason: rebootLoaderState.reason, symbol: "arrow.trianglehead.2.clockwise.rotate.90") { vm.rebootLoader() }
+                    ActionTile(title: "切换 Loader", subtitle: "通过控制服务或 SSH 让开发板进入 Loader", enabled: rebootLoaderState.enabled, disabledReason: rebootLoaderState.reason, symbol: "arrow.trianglehead.2.clockwise.rotate.90") { vm.rebootLoader() }
                 }
                 .padding(.top, 8)
             }
@@ -8202,9 +9128,11 @@ struct FlashTab: View {
             )
 
             flashSection(
-                title: "初始镜像恢复",
+                title: vm.taishanPiDevelopmentMode == .macLLVM ? "Mac LLVM 初始镜像恢复" : "Linux GCC 初始镜像恢复",
                 source: .factory,
-                emptyState: "缺少初始镜像时会先自动同步。"
+                emptyState: vm.taishanPiDevelopmentMode == .macLLVM
+                    ? "未发现 Mac LLVM 初始镜像，请先挂载或安装 Mac LLVM 离线环境包。"
+                    : "缺少 Linux GCC 初始镜像时会先自动同步。"
             )
             Spacer(minLength: 0)
         }
@@ -8683,6 +9611,66 @@ struct ReleaseStateCard: View {
     }
 }
 
+struct DevelopmentModeSwitchCard: View {
+    let title: String
+    let subtitle: String
+    let statusText: String
+    let ok: Bool
+    let selected: Bool
+    let action: () -> Void
+
+    private var tint: Color {
+        ok ? .green : .orange
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 10)
+                    if selected {
+                        Text("当前")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.accentColor.opacity(0.14))
+                            .foregroundStyle(Color.accentColor)
+                            .clipShape(Capsule())
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Image(systemName: ok ? "checkmark.circle.fill" : "clock.badge.exclamationmark")
+                        .foregroundStyle(tint)
+                    Text(statusText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+            .background(Color.primary.opacity(selected ? 0.075 : 0.045))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(selected ? Color.accentColor.opacity(0.52) : tint.opacity(0.18), lineWidth: selected ? 2 : 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 struct ArtifactValidationRow: View {
     let item: LocalArtifactValidationItem
 
@@ -8766,6 +9754,9 @@ struct InstallerPrimaryActionCard: View {
 }
 
 struct InstallerOfflineCard: View {
+    let title: String
+    let subtitle: String
+    let requirementText: String
     let path: String
     let validation: LocalArtifactValidationState
     let chooseAction: () -> Void
@@ -8787,9 +9778,9 @@ struct InstallerOfflineCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("离线安装")
+            Text(title)
                 .font(.headline)
-            Text("如已提前下载发布资源，可直接选择本地目录导入。")
+            Text(subtitle)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -8812,7 +9803,7 @@ struct InstallerOfflineCard: View {
                 Button("从本地文件安装", action: installAction)
                     .controlSize(.large)
                     .disabled(!validation.ready)
-                Text("目录内应包含共享镜像、初始镜像和发布工作区归档，Qt 编译环境包可选。")
+                Text(requirementText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -9586,32 +10577,94 @@ struct DevelopmentInstallPanelView: View {
         return vm.currentTask?.status != "finished" && vm.isInstallerTask(vm.currentTask)
     }
 
+    private var resolvedBoard: SupportedBoard? {
+        board ??
+        vm.supportedBoard(for: vm.preferredControlBoardID) ??
+        vm.supportedBoard(for: vm.connectedBoardID) ??
+        vm.supportedBoard(for: "TaishanPi")
+    }
+
+    private var resolvedVariantID: String? {
+        guard let resolvedBoard else {
+            return nil
+        }
+        if let active = vm.activeVariantID(for: resolvedBoard.id) {
+            return active
+        }
+        if resolvedBoard.id == "TaishanPi" {
+            return "1M-RK3566"
+        }
+        return nil
+    }
+
     private var boardSupportsDevelopmentInstall: Bool {
-        guard let board else {
+        guard let resolvedBoard else {
             return false
         }
-        return vm.boardSupportsDevelopmentEnvironment(board.id, variantID: vm.activeVariantID(for: board.id))
+        return vm.boardSupportsDevelopmentEnvironment(resolvedBoard.id, variantID: resolvedVariantID)
+    }
+
+    private var isTaishanPiBoard: Bool {
+        resolvedBoard?.id == "TaishanPi"
     }
 
     private var headerTitle: String {
-        embedded ? "开发环境安装" : "发布环境安装"
+        embedded ? "开发环境" : "开发环境管理"
     }
 
     private var headerSubtitle: String {
         if boardSupportsDevelopmentInstall {
-            if let board {
-                return "为 \(board.displayName) 准备共享镜像、发布工作区和初始镜像资源。"
+            if isTaishanPiBoard {
+                switch vm.taishanPiDevelopmentMode {
+                case .dockerLinux:
+                    return "自动识别 Linux GCC / Docker 发布工作区、共享镜像和初始镜像缓存，并允许切换到其它开发环境视图。"
+                case .macLLVM:
+                    return "自动识别 Apple Silicon 原生 LLVM SDK、宿主工具和 LLVM 镜像 staging，并允许切换回 Linux GCC 视图。"
+                }
+            }
+            if let resolvedBoard {
+                return "为 \(resolvedBoard.displayName) 准备共享镜像、发布工作区和初始镜像资源。"
             }
             return "自动准备共享镜像、发布工作区和初始镜像资源。"
         }
-        if let board,
-           let metadata = vm.installedBoardToolingMetadata(board.id),
+        if let resolvedBoard,
+           let metadata = vm.installedBoardToolingMetadata(resolvedBoard.id),
            metadata.require_explicit_variant_confirmation,
-           vm.activeVariantID(for: board.id) == nil
+           resolvedVariantID == nil
         {
             return "当前开发板插件要求先明确具体板型，确认后才能匹配对应的开发环境与部署参数。"
         }
         return "当前开发板插件已安装，但这一板型的开发环境安装链路尚未接入。"
+    }
+
+    private func modeReady(_ mode: TaishanPiDevelopmentMode) -> Bool {
+        switch mode {
+        case .dockerLinux:
+            return vm.developmentInstallStatus.dockerEnvironmentReady
+        case .macLLVM:
+            return vm.developmentInstallStatus.llvmEnvironmentReady
+        }
+    }
+
+    private func modeStatusText(_ mode: TaishanPiDevelopmentMode) -> String {
+        switch mode {
+        case .dockerLinux:
+            if vm.developmentInstallStatus.dockerEnvironmentReady {
+                return "Docker 镜像、发布工作区和刷写缓存已就绪"
+            }
+            if vm.developmentInstallStatus.dockerEnvironmentPartial {
+                return "Linux GCC 依赖只完成了一部分"
+            }
+            return "尚未检测到 Linux GCC 开发环境"
+        case .macLLVM:
+            if vm.developmentInstallStatus.llvmEnvironmentReady {
+                return "LLVM SDK、宿主工具和镜像 staging 已就绪"
+            }
+            if vm.developmentInstallStatus.llvmEnvironmentPartial {
+                return "Mac LLVM 依赖只完成了一部分"
+            }
+            return "尚未检测到 Mac LLVM 开发环境"
+        }
     }
 
     var body: some View {
@@ -9644,7 +10697,7 @@ struct DevelopmentInstallPanelView: View {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text("重新检查")
                                         .font(.title3.weight(.semibold))
-                                    Text("刷新开发环境安装状态，并同步 Docker、镜像与插件检查结果。")
+                                    Text("刷新开发环境安装状态，并同步 Linux GCC、Mac LLVM、镜像与插件检查结果。")
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
                                 }
@@ -9673,49 +10726,169 @@ struct DevelopmentInstallPanelView: View {
                     )
                     .help("点击重新检查开发环境安装状态")
                 } else {
-                    ReleaseHeroCard(
-                        symbol: "shippingbox.circle.fill",
-                        title: headerTitle,
-                        subtitle: headerSubtitle,
-                        badgeText: vm.developmentInstallHeadline,
+                            ReleaseHeroCard(
+                                symbol: "shippingbox.circle.fill",
+                                title: headerTitle,
+                                subtitle: headerSubtitle,
+                                badgeText: vm.developmentInstallHeadline,
                         badgeColor: vm.fullDevelopmentEnvironmentReady ? .green : .accentColor
                     )
                 }
             }
 
             if boardSupportsDevelopmentInstall {
-                HStack(spacing: 12) {
-                    ReleaseStateCard(
-                        title: "运行环境",
-                        detail: vm.developmentInstallStatus.dockerReady && vm.developmentInstallStatus.officialImageReady ? "Docker 与共享镜像已就绪" : "需要准备 Docker 和共享镜像",
-                        ok: vm.developmentInstallStatus.dockerReady && vm.developmentInstallStatus.officialImageReady,
-                        helpText: """
-                        Docker Desktop: \(vm.developmentInstallStatus.dockerReady ? "已启动" : "未就绪")
-                        共享镜像: \(vm.developmentInstallStatus.officialImageReady ? "已安装" : "未安装")
-                        镜像名: \(vm.officialImageName)
-                        """
-                    )
-                    ReleaseStateCard(
-                        title: "发布工作区",
-                        detail: vm.developmentInstallStatus.releaseVolumeReady ? "发布工作区 Volume 已可用" : "将自动导入发布工作区",
-                        ok: vm.developmentInstallStatus.releaseVolumeReady,
-                        helpText: """
-                        Docker Volume: \(vm.officialVolumeName)
-                        工作区模式: 发布版
-                        """
-                    )
-                    ReleaseStateCard(
-                        title: "初始镜像",
-                        detail: vm.developmentInstallStatus.hostImagesReady && vm.developmentInstallStatus.rkflashtoolReady ? "初始镜像缓存与刷机工具已就绪" : "将自动同步初始镜像并准备刷机工具",
-                        ok: vm.developmentInstallStatus.hostImagesReady && vm.developmentInstallStatus.rkflashtoolReady,
-                        helpText: """
-                        镜像目录: \(vm.factoryImageDirURL().path)
-                        初始镜像缓存: \(vm.developmentInstallStatus.hostImagesReady ? "已就绪" : "未就绪")
-                        rkflashtool-mac: \(vm.developmentInstallStatus.rkflashtoolReady ? "已就绪" : "未就绪")
-                        """
-                    )
+                if isTaishanPiBoard {
+                    HStack(spacing: 12) {
+                        ForEach(vm.availableTaishanPiDevelopmentModes) { mode in
+                            DevelopmentModeSwitchCard(
+                                title: mode.title,
+                                subtitle: mode.subtitle,
+                                statusText: modeStatusText(mode),
+                                ok: modeReady(mode),
+                                selected: vm.taishanPiDevelopmentMode == mode,
+                                action: { vm.setTaishanPiDevelopmentMode(mode) }
+                            )
+                        }
+                    }
+                    .padding(.top, 8)
+
+                    if vm.canChooseTaishanPiDevelopmentMode {
+                        Picker("开发环境模式", selection: Binding(
+                            get: { vm.taishanPiDevelopmentMode },
+                            set: { vm.setTaishanPiDevelopmentMode($0) }
+                        )) {
+                            ForEach(vm.availableTaishanPiDevelopmentModes) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.top, 2)
+                    } else {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text(vm.taishanPiDevelopmentModeFixedSummary)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding(.top, 2)
+                    }
+
+                    if vm.taishanPiDevelopmentMode == .dockerLinux {
+                        HStack(spacing: 12) {
+                            ReleaseStateCard(
+                                title: "运行环境",
+                                detail: vm.developmentInstallStatus.dockerReady && vm.developmentInstallStatus.officialImageReady ? "Docker 与共享镜像已就绪" : "需要准备 Docker 和共享镜像",
+                                ok: vm.developmentInstallStatus.dockerReady && vm.developmentInstallStatus.officialImageReady,
+                                helpText: """
+                                Docker Desktop: \(vm.developmentInstallStatus.dockerReady ? "已启动" : "未就绪")
+                                共享镜像: \(vm.developmentInstallStatus.officialImageReady ? "已安装" : "未安装")
+                                镜像名: \(vm.officialImageName)
+                                """
+                            )
+                            ReleaseStateCard(
+                                title: "发布工作区",
+                                detail: vm.developmentInstallStatus.releaseVolumeReady ? "发布工作区 Volume 已可用" : "将自动导入发布工作区",
+                                ok: vm.developmentInstallStatus.releaseVolumeReady,
+                                helpText: """
+                                Docker Volume: \(vm.officialVolumeName)
+                                工作区模式: 发布版
+                                """
+                            )
+                            ReleaseStateCard(
+                                title: "初始镜像",
+                                detail: vm.developmentInstallStatus.hostImagesReady && vm.developmentInstallStatus.rkflashtoolReady ? "初始镜像缓存与刷机工具已就绪" : "将自动同步初始镜像并准备刷机工具",
+                                ok: vm.developmentInstallStatus.hostImagesReady && vm.developmentInstallStatus.rkflashtoolReady,
+                                helpText: """
+                                镜像目录: \(vm.factoryImageDirURL().path)
+                                初始镜像缓存: \(vm.developmentInstallStatus.hostImagesReady ? "已就绪" : "未就绪")
+                                rkflashtool-mac: \(vm.developmentInstallStatus.rkflashtoolReady ? "已就绪" : "未就绪")
+                                """
+                            )
+                        }
+                        .padding(.top, 8)
+                    } else {
+                        HStack(spacing: 12) {
+                            ReleaseStateCard(
+                                title: "LLVM SDK",
+                                detail: vm.developmentInstallStatus.llvmSDKReady ? "SDK 工作树、入口脚本和 wrapper 已就绪" : "需要准备大小写敏感 SDK 卷和入口脚本",
+                                ok: vm.developmentInstallStatus.llvmSDKReady,
+                                helpText: """
+                                SDK 根目录: \(vm.developmentInstallStatus.llvmSDKRoot)
+                                卷已挂载: \(vm.developmentInstallStatus.llvmSDKMounted ? "已检测到" : "未检测到")
+                                大小写敏感: \(vm.developmentInstallStatus.llvmSDKCaseSensitive ? "是" : "否")
+                                build-llvm.sh / llvm-env.sh: \(vm.developmentInstallStatus.llvmEntryScriptsReady ? "已就绪" : "未就绪")
+                                .llvm-cross: \(vm.developmentInstallStatus.llvmCrossWrappersReady ? "已就绪" : "未就绪")
+                                .llvm-host-tools: \(vm.developmentInstallStatus.llvmHostWrappersReady ? "已就绪" : "未就绪")
+                                """
+                            )
+                            ReleaseStateCard(
+                                title: "宿主工具",
+                                detail: vm.developmentInstallStatus.llvmHostToolsReady ? "clang / lld / dtc / e2fsprogs / fakeroot 已就绪" : "宿主 LLVM 工具链仍有缺失",
+                                ok: vm.developmentInstallStatus.llvmHostToolsReady,
+                                helpText: """
+                                clang: \(vm.developmentInstallStatus.llvmClangReady ? "已就绪" : "未就绪")
+                                ld.lld: \(vm.developmentInstallStatus.llvmLLDReady ? "已就绪" : "未就绪")
+                                llvm-objcopy: \(vm.developmentInstallStatus.llvmObjcopyReady ? "已就绪" : "未就绪")
+                                llvm-readelf: \(vm.developmentInstallStatus.llvmReadelfReady ? "已就绪" : "未就绪")
+                                python3: \(vm.developmentInstallStatus.llvmPython3Ready ? "已就绪" : "未就绪")
+                                dtc: \(vm.developmentInstallStatus.llvmDtcReady ? "已就绪" : "未就绪")
+                                fakeroot: \(vm.developmentInstallStatus.llvmFakerootReady ? "已就绪" : "未就绪")
+                                mke2fs: \(vm.developmentInstallStatus.llvmMke2fsReady ? "已就绪" : "未就绪")
+                                tune2fs: \(vm.developmentInstallStatus.llvmTune2fsReady ? "已就绪" : "未就绪")
+                                """
+                            )
+                            ReleaseStateCard(
+                                title: "LLVM 镜像",
+                                detail: vm.developmentInstallStatus.llvmFactoryImagesReady ? "初始镜像已安装，用户镜像独立生成" : "需要安装 Mac LLVM 初始镜像",
+                                ok: vm.developmentInstallStatus.llvmFactoryImagesReady,
+                                helpText: """
+                                初始镜像: \(vm.macLLVMFactoryImageDirURL().path)
+                                初始镜像状态: \(vm.developmentInstallStatus.llvmFactoryImagesReady ? "已就绪" : "未就绪")
+                                用户镜像: \(vm.macLLVMCustomImageDirURL().path)
+                                用户镜像状态: \(vm.developmentInstallStatus.llvmCustomImagesReady ? "已就绪" : "等待构建同步生成")
+                                bootprobe staging: \(vm.taishanPiLLVMBootProbeImageDirURL().path)
+                                bootprobe staging: \(vm.developmentInstallStatus.llvmBootProbeImagesReady ? "已就绪" : "可选")
+                                """
+                            )
+                        }
+                        .padding(.top, 8)
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        ReleaseStateCard(
+                            title: "运行环境",
+                            detail: vm.developmentInstallStatus.dockerReady && vm.developmentInstallStatus.officialImageReady ? "Docker 与共享镜像已就绪" : "需要准备 Docker 和共享镜像",
+                            ok: vm.developmentInstallStatus.dockerReady && vm.developmentInstallStatus.officialImageReady,
+                            helpText: """
+                            Docker Desktop: \(vm.developmentInstallStatus.dockerReady ? "已启动" : "未就绪")
+                            共享镜像: \(vm.developmentInstallStatus.officialImageReady ? "已安装" : "未安装")
+                            镜像名: \(vm.officialImageName)
+                            """
+                        )
+                        ReleaseStateCard(
+                            title: "发布工作区",
+                            detail: vm.developmentInstallStatus.releaseVolumeReady ? "发布工作区 Volume 已可用" : "将自动导入发布工作区",
+                            ok: vm.developmentInstallStatus.releaseVolumeReady,
+                            helpText: """
+                            Docker Volume: \(vm.officialVolumeName)
+                            工作区模式: 发布版
+                            """
+                        )
+                        ReleaseStateCard(
+                            title: "初始镜像",
+                            detail: vm.developmentInstallStatus.hostImagesReady && vm.developmentInstallStatus.rkflashtoolReady ? "初始镜像缓存与刷机工具已就绪" : "将自动同步初始镜像并准备刷机工具",
+                            ok: vm.developmentInstallStatus.hostImagesReady && vm.developmentInstallStatus.rkflashtoolReady,
+                            helpText: """
+                            镜像目录: \(vm.factoryImageDirURL().path)
+                            初始镜像缓存: \(vm.developmentInstallStatus.hostImagesReady ? "已就绪" : "未就绪")
+                            rkflashtool-mac: \(vm.developmentInstallStatus.rkflashtoolReady ? "已就绪" : "未就绪")
+                            """
+                        )
+                    }
+                    .padding(.top, 8)
                 }
-                .padding(.top, 8)
 
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 10) {
@@ -9756,7 +10929,17 @@ struct DevelopmentInstallPanelView: View {
                 }
                 .padding(.top, 4)
 
+                let offlineTitle = isTaishanPiBoard ? "\(vm.taishanPiDevelopmentMode.title) 离线安装" : "离线安装"
+                let offlineSubtitle = isTaishanPiBoard && vm.taishanPiDevelopmentMode == .macLLVM
+                    ? "选择 Mac LLVM 发布包或本地 LLVM 工作区归档导入。"
+                    : "如已提前下载发布资源，可直接选择本地目录导入。"
+                let offlineRequirement = isTaishanPiBoard && vm.taishanPiDevelopmentMode == .macLLVM
+                    ? "目录内应包含 LLVM 发布/工作区归档，LLVM 镜像包与 Qt 编译环境包可选。"
+                    : "目录内应包含共享镜像、初始镜像和发布工作区归档，Qt 编译环境包可选。"
                 InstallerOfflineCard(
+                    title: offlineTitle,
+                    subtitle: offlineSubtitle,
+                    requirementText: offlineRequirement,
                     path: vm.localArtifactsDir,
                     validation: vm.localArtifactValidation,
                     chooseAction: { vm.browseDirectory { path in
@@ -9773,7 +10956,7 @@ struct DevelopmentInstallPanelView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("当前开发板插件已安装，但开发环境安装链路尚未接入这一型号。")
                         .font(.system(.subheadline, design: .rounded).weight(.medium))
-                    Text("目前这套发布环境安装流程仍然优先适配泰山派（1M-RK3566）。后续会按开发板插件能力继续拆分与接入。")
+                    Text("目前这套开发环境管理流程仍然优先适配泰山派（1M-RK3566），并已区分 Linux GCC 与 Mac LLVM 两种环境视图。后续会按开发板插件能力继续拆分与接入。")
                         .font(.system(.subheadline, design: .rounded))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -9788,7 +10971,7 @@ struct DevelopmentInstallPanelView: View {
                             title: "环境接入",
                             detail: "开发环境安装功能待该板型接入后启用。",
                             ok: false,
-                            helpText: "当前仅泰山派（1M-RK3566）已复用发布环境安装链路。"
+                            helpText: "当前仅泰山派（1M-RK3566）已接入双环境开发面板。"
                         )
                     }
                 }
@@ -9869,7 +11052,7 @@ struct DevelopmentInstallWindowView: View {
 
     var body: some View {
         DevelopmentInstallPanelView(vm: vm, board: nil, embedded: false)
-            .frame(minWidth: 760, minHeight: 580)
+            .frame(minWidth: 820, minHeight: 660)
             .background(
                 WindowAccessor { window in
                     hostWindow = window
@@ -12222,7 +13405,42 @@ struct ConnectedBoardDashboardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Spacer()
+                if vm.controlPageIsTaishanPi {
+                    HStack(spacing: 8) {
+                        Text("环境")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        if vm.canChooseTaishanPiDevelopmentMode {
+                            Picker("编译模式", selection: Binding(
+                                get: { vm.taishanPiDevelopmentMode },
+                                set: { vm.setTaishanPiDevelopmentMode($0) }
+                            )) {
+                                ForEach(vm.availableTaishanPiDevelopmentModes) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .frame(width: 176)
+                        } else {
+                            Text(vm.taishanPiDevelopmentMode.title)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
+                                .background(Color.toolkitPanelBackground)
+                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        }
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.toolkitPanelBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .help("选择当前控制页、下载、安装、构建和用户镜像刷写使用的 TaishanPi 编译环境。")
+                }
+
+                Spacer(minLength: 18)
 
                 if !vm.activeControlDeviceCandidates.isEmpty {
                     Button {
@@ -12308,24 +13526,10 @@ struct ConnectedBoardDashboardView: View {
                     .frame(maxWidth: 340, alignment: .trailing)
                 }
 
-                if let board = vm.detectedBoard {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(vm.controlPageBoardTitle)
-                            .font(.system(.caption, design: .rounded).weight(.semibold))
-                        Text(board.manufacturer)
-                            .font(.system(.caption2, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.accentColor.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
-
                 Text(vm.localAgentRunning ? "DBT Agent 在线" : "DBT Agent 离线")
                     .font(.caption)
                     .foregroundStyle(vm.localAgentRunning ? .green : .secondary)
-                if vm.detectedBoard?.id == "TaishanPi" {
+                if vm.controlPageIsTaishanPi {
                     let rebootDeviceState = vm.actionAvailabilityState(for: .rebootDevice)
                     Button("设备重启") { requestRebootDevice() }
                         .disabled(!rebootDeviceState.enabled)
@@ -12335,7 +13539,7 @@ struct ConnectedBoardDashboardView: View {
 
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 12) {
-                    if let board = vm.detectedBoard, board.id == "TaishanPi" {
+                    if vm.controlPageIsTaishanPi {
                         Picker("", selection: $selectedTab) {
                             Text("总览").tag(0)
                             Text("刷写").tag(1)
@@ -12386,6 +13590,12 @@ struct ConnectedBoardDashboardView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task(id: "\(vm.taishanPiDevelopmentMode.rawValue)::\(vm.controlPageBoardTitle)") {
+            guard vm.controlPageIsTaishanPi else {
+                return
+            }
+            await vm.refreshDevelopmentInstallStatus()
+        }
     }
 }
 
@@ -12951,7 +14161,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             return .systemOrange
         }
         switch vm.status?.usb?.mode ?? "absent" {
-        case "loader":
+        case "loader", "maskrom":
             return .systemBlue
         case "usb-ecm":
             if vm.taishanUSBECMTransportOnly() {
@@ -12979,6 +14189,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         guard vm.localAgentRunning else {
             return .warning
         }
+        if vm.taishanLoaderTransitionActive {
+            return .loader
+        }
         if isRP2350BoardID(vm.status?.device?.board_id) {
             let rpState = (vm.status?.rp2350?.state ?? vm.status?.usb?.mode ?? "absent").lowercased()
             switch rpState {
@@ -12998,13 +14211,16 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         if usbMode == "absent" {
             return .warning
         }
+        if usbMode == "loader" || usbMode == "maskrom" {
+            return .loader
+        }
         if vm.taishanUSBECMTransportOnly() {
             return .warning
         }
         if vm.status?.board?.ping == true || vm.status?.board?.ssh_port_open == true || vm.status?.board?.control_service == true {
             return .online
         }
-        if usbMode == "loader" || usbMode == "usb-ecm" || usbMode == "detecting" || vm.status?.usbnet?.configured == true {
+        if usbMode == "loader" || usbMode == "maskrom" || usbMode == "usb-ecm" || usbMode == "detecting" || vm.status?.usbnet?.configured == true {
             return .warning
         }
         return .hidden
@@ -13112,6 +14328,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         }
         installClickMonitors()
         vm.refreshStatus(silent: true)
+        Task { await vm.refreshDevelopmentInstallStatus() }
         popover.contentSize = BoardCatalogLayout.popoverSize
         if let hosting = popover.contentViewController as? NSHostingController<ContentView> {
             hosting.rootView = ContentView(vm: vm, showDetachedModel: { [weak self] board in
@@ -13291,14 +14508,14 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         }
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 540),
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 660),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Development Board Toolchain 发布环境安装"
+        window.title = "Development Board Toolchain 开发环境"
         window.center()
-        window.setContentSize(NSSize(width: 760, height: 540))
+        window.setContentSize(NSSize(width: 820, height: 660))
         let closeGuard = WindowCloseGuard { [weak vm] in
             guard let vm else {
                 return true

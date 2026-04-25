@@ -29,7 +29,10 @@ Important paths:
   - `~/Library/development-board-toolchain/agent/bin/dbt-agentd`
 - canonical board-family assets:
   - `~/Library/development-board-toolchain/families/rk356x/boards/TaishanPi/variants/1M-RK3566/images/{factory,custom}/current`
+  - `~/Library/development-board-toolchain/families/rk356x/boards/TaishanPi/variants/1M-RK3566/images/custom-clang-bootprobe/current`
   - `~/Library/development-board-toolchain/families/rp2350/boards/<BoardID>/assets`
+- TaishanPi native LLVM SDK default:
+  - `/Volumes/LLVM-TSPI/sdk-tools`
 
 Installer expectation:
 
@@ -78,6 +81,23 @@ Important fields currently consumed by the GUI:
 - `rp2350.state`
 - `rp2350.summary_for_user`
 - `rp2350.runtime_port.device`
+
+GUI status rendering should treat the top-level `usb_ecm_ready` field returned
+by `dbt-agentd` as the USB ECM readiness verdict. The nested
+`runtime_status.usbnet.configured` value is raw host-addressing detail and may
+remain false while SSH or the control service proves that the board is reachable.
+If the user explicitly requests USB network recovery while
+`host.usbnet_helper_installed=false`, the GUI must request privileged helper
+installation and run recovery through that helper instead of submitting a normal
+user-level `usbnet ensure` job that macOS will reject.
+Because host-status cache can be stale after helper installation, the manual
+`恢复 USB 网络` action should first try the normal runtime `usbnet ensure` path.
+Only when that path reports a root/sudo/helper error should the GUI request
+administrator authorization again.
+
+If `GET /v1/status/summary` times out but `GET /healthz` still succeeds, the GUI
+must keep the local-agent state online and report only a temporary status refresh
+delay. A status-refresh failure is not the same thing as local agent absence.
 
 ## Local Agent Endpoints
 
@@ -132,7 +152,7 @@ Each job should provide:
 Client-side polling rules:
 
 - For `/v1/jobs/reboot` and `/v1/jobs/flash`, the GUI should use local UI-state gating plus the create-job response as the authoritative submission check. Do not add a separate remote precheck round-trip before creating the job.
-- `切换 Loader` should release the foreground wait UI as soon as the local-agent job is accepted, then continue completion tracking in the background.
+- `切换 Loader` should show immediate click feedback while confirming local UI-state and submitting the job, release the foreground wait UI as soon as the local-agent job is accepted, then continue completion tracking in the background.
 - `设备重启` may keep a short success transition after the local-agent job is accepted so the user can perceive that the reboot request has been fully submitted, but it must not wait for device recovery in that prompt.
 - The GUI should poll more aggressively during the first few seconds of a fresh job, then fall back to the normal 1-second cadence.
 - The GUI must not assume every job streams incremental output. Some local-agent jobs only update `output_tail` when the underlying runtime command exits.
@@ -150,8 +170,17 @@ Client-side polling rules:
 
 - networked board model
 - relies on USB ECM / SSH / control service state for normal runtime operations
-- flash submission also accepts direct Loader USB
+- `board.ssh_port_open=true` must mean the board IP routes through the detected USB ECM interface and returns an SSH protocol banner; a bare TCP connect is not enough because stale host routing can point `198.19.77.2` at a non-board interface
+- entering Loader from a running TaishanPi should use the local-agent reboot job; USB control service is preferred, but SSH is an accepted fallback when `board.ssh_port_open=true`
+- a control-service failure means the board-side DBT USB control endpoint is not listening or not responding; it must be reported as one failed control channel, not as proof that SSH-based board control is unavailable
+- flash submission also accepts direct Loader / Maskrom USB
+- when TaishanPi is still in USB ECM runtime mode, GUI flash gating should allow automatic Loader switching if either `board.control_service=true` or `board.ssh_port_open=true`; only block runtime-mode flash when both control service and SSH are unavailable
 - `reboot_device` should be considered valid when the board is already in Loader / Maskrom recovery mode
+- the development-environment panel should expose two separately detected TaishanPi modes:
+  - `Docker Linux`
+  - `Mac LLVM`
+- the GUI may let the user switch which TaishanPi development mode is currently expanded, but it must keep the two mode states visible as separate readiness summaries
+- that GUI-side mode switch must not claim a local-agent build profile switch unless the local control plane actually exposes a distinct TaishanPi LLVM profile
 - overview status should map directly from unified status fields
 - if USB ECM is configured but both `board.ssh_port_open` and `board.control_service` are false, the GUI should surface this as a transport-only warning such as `USB ECM 已枚举，板端未响应`
 - for that TaishanPi warning state, the GUI must not promote the board to an online/healthy state purely because `board.ping` still looks true

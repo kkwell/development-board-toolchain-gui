@@ -1,6 +1,6 @@
 # DBT Agentd Baseline
 
-This document records the current `dbt-agentd` baseline for version `1.0.7`.
+This document records the current `dbt-agentd` baseline for version `1.0.8`.
 
 ## Role
 
@@ -17,15 +17,15 @@ It sits between user clients and execution tools:
 ## Primary Source Files
 
 - service implementation:
-  - [/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/swift-agentd/Sources/DBTAgentd/main.swift](/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/swift-agentd/Sources/DBTAgentd/main.swift)
+  - [/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/swift-agentd/Sources/DBTAgentd/main.swift](/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/swift-agentd/Sources/DBTAgentd/main.swift)
 - service package:
-  - [/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/swift-agentd/Package.swift](/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/swift-agentd/Package.swift)
+  - [/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/swift-agentd/Package.swift](/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/swift-agentd/Package.swift)
 - local service API notes:
-  - [/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/service/LOCAL_API.md](/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/service/LOCAL_API.md)
+  - [/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/service/LOCAL_API.md](/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/service/LOCAL_API.md)
 - local config template:
-  - [/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/service/dbt-agentd.local.template.json](/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/service/dbt-agentd.local.template.json)
+  - [/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/service/dbt-agentd.local.template.json](/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/service/dbt-agentd.local.template.json)
 - board tool boundary manifest:
-  - [/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/manifests/board-tool-boundaries.json](/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/manifests/board-tool-boundaries.json)
+  - [/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/manifests/board-tool-boundaries.json](/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/manifests/board-tool-boundaries.json)
 
 ## Execution Backends
 
@@ -62,6 +62,8 @@ Current validated behavior:
 - `GET /v1/status/summary` and `GET /v1/status/live` now expose both connected boards in `devices[]`
 - `active_device_id` remains a compatibility pointer for clients that still assume one active device
 - the current selection rule prefers the authoritative runtime device, and in the validated two-board setup that currently resolves to `TaishanPi`
+- the GUI should use top-level `usb_ecm_ready` from `dbt-agentd` as the rendered USB ECM readiness verdict; nested `runtime_status.usbnet.configured` is lower-level host-addressing detail
+- `GET /v1/status/summary` is a GUI polling endpoint and must remain low-cost; if board reachability is already proven by Ping, SSH, or control service, slow reconciliation belongs in background refresh or `/v1/status/live`
 - `device_id` is now scoped to a stable board-family identifier instead of the raw transport locator
 - `transport_locator` remains the current connection endpoint, such as `198.19.77.2`, `198.19.1.2`, or `/dev/cu.usbmodem112301`
 - current stable identity rule:
@@ -250,8 +252,8 @@ This is not yet the final multi-device UI/UX model, but it is now a working cont
 
 Authoring source remains in:
 
-- [/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/vault](/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/vault)
-- [/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/registry](/Users/kvell/kk-project/docker-project/docker_mac_env/dbt-agentd-project/registry)
+- [/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/vault](/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/vault)
+- [/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/registry](/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/dbt-agentd-project/registry)
 
 Compiled or published data consumed by the runtime is derived from:
 
@@ -262,7 +264,7 @@ Compiled or published data consumed by the runtime is derived from:
 
 The maintained RP2350 initialization firmware source-of-truth is documented in:
 
-- [/Users/kvell/kk-project/docker-project/docker_mac_env/development-board-toolchain/docs/RP2350_INITIAL_FIRMWARE_BASELINE.md](/Users/kvell/kk-project/docker-project/docker_mac_env/development-board-toolchain/docs/RP2350_INITIAL_FIRMWARE_BASELINE.md)
+- [/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/development-board-toolchain/docs/RP2350_INITIAL_FIRMWARE_BASELINE.md](/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/development-board-toolchain/docs/RP2350_INITIAL_FIRMWARE_BASELINE.md)
 
 Current fixed source roots:
 
@@ -271,8 +273,8 @@ Current fixed source roots:
 
 Current fixed runtime asset roots:
 
-- `/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/runtime/toolkit-runtime/assets/ColorEasyPICO2/initial.uf2`
-- `/Users/kvell/kk-project/docker-project/docker_mac_env/product_release/runtime/toolkit-runtime/assets/RaspberryPiPico2W/initial.uf2`
+- `/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/product_release/runtime/toolkit-runtime/assets/ColorEasyPICO2/initial.uf2`
+- `/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/product_release/runtime/toolkit-runtime/assets/RaspberryPiPico2W/initial.uf2`
 
 ## Current Board Scope
 
@@ -319,4 +321,4 @@ Current validated focus is runtime/environment integration:
 - do not reintroduce legacy remote-generation paths as the default control path
 - keep board-family-specific internals behind one local control plane contract
 - future multi-client and multi-device changes must follow:
-  - [MULTI_CLIENT_DEVICE_COORDINATION.md](/Users/kvell/kk-project/docker-project/docker_mac_env/development-board-toolchain/docs/MULTI_CLIENT_DEVICE_COORDINATION.md)
+  - [MULTI_CLIENT_DEVICE_COORDINATION.md](/Users/kvell/kk-project/DBT-Agent-Project/dbt-agentd/development-board-toolchain/docs/MULTI_CLIENT_DEVICE_COORDINATION.md)

@@ -4,6 +4,26 @@ This document defines the canonical install shape for the local Codex plugin `db
 
 `DBT-Agent` is the Codex-facing name. `DBT` is the short form of `Development Board Toolchain`.
 
+On current Codex, DBT-Agent is installed as one plugin inside Codex's generic local marketplace:
+
+- marketplace file: `~/.codex/.tmp/plugins/.agents/plugins/marketplace.json`
+- marketplace `name`: `plugins`
+- marketplace `interface.displayName`: `Plugins`
+- plugin package `name`: `dbt-agent`
+- source path: `./plugins/dbt-agent`
+
+Fallback for older Codex layouts without the generic marketplace is:
+
+- marketplace file: `~/.agents/plugins/marketplace.json`
+- marketplace `name`: `dbt-agent-local`
+- source path: `./.codex/plugins/dbt-agent`
+
+Do not use the old `local-development-board-marketplace` marketplace name; it
+is long enough to cover or truncate the plugin card title in Codex UI.
+Do not rename Codex's generic `plugins` marketplace to `DBT-Agent`; that creates
+a separate DBT-Agent dropdown category and can mark unrelated plugins
+incorrectly.
+
 ## Canonical model
 
 Codex does not get its own separate DBT runtime.
@@ -31,23 +51,16 @@ Do not use or restore it.
 
 ## Codex install targets
 
-`dbtctl release install-codex-plugin` installs into Codex’s plugin root:
+`dbtctl release install-codex-plugin` installs into Codex's generic plugin root when available:
 
-- preferred local marketplace root:
-  - `~/.codex/.tmp/plugins`
-- fallback local marketplace root:
-  - `~`
-
-So the installed plugin ends up at one of:
-
-- `~/.codex/plugins/dbt-agent`
 - `~/.codex/.tmp/plugins/plugins/dbt-agent`
-- `~/plugins/dbt-agent`
 
-And the marketplace file ends up at one of:
+And the marketplace file is:
 
 - `~/.codex/.tmp/plugins/.agents/plugins/marketplace.json`
-- `~/.agents/plugins/marketplace.json`
+
+Fallback install targets are `~/.codex/plugins/dbt-agent` and
+`~/.agents/plugins/marketplace.json` when the generic plugin mirror is absent.
 
 ## Installed plugin contents
 
@@ -63,6 +76,10 @@ Its `.mcp.json` must point to the shared runtime MCP bridge binary:
 - `~/Library/development-board-toolchain/runtime/editor_plugins/codex/bin/dbt-agent-mcp-bridge`
 
 It must not point to a duplicated plugin-local runtime or a plugin-local Python entry.
+Its skill instructions must answer user-facing board feature and capability
+questions from DBT tool results and installed capability data. They must not
+quote maintainer source-checkout docs or private host paths outside
+`~/Library/development-board-toolchain`.
 
 ## UI install flow
 
