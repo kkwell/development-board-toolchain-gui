@@ -1283,6 +1283,8 @@ final class ToolkitViewModel: ObservableObject {
     private var suppressConnectedAgentStatusUntil: Date?
     private var lastBackgroundStatusNotificationAt: Date?
     private var lastBackgroundStatusNotificationMessage = ""
+    private var recentActivityFingerprintAt: [String: Date] = [:]
+    private var recentUserNotificationAt: [String: Date] = [:]
     private var rp2350ModeTransitionUntil: Date?
     private var taishanLoaderTransitionUntil: Date?
 
@@ -4885,6 +4887,21 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func appendActivity(level: ActivityLevel, title: String, message: String, detail: String? = nil, updateSummary: Bool = true) {
+        let now = Date()
+        let dedupeWindow = activityDedupeWindow(level: level, title: title, updateSummary: updateSummary)
+        if dedupeWindow > 0 {
+            let fingerprint = activityFingerprint(level: level, title: title, message: message, detail: detail)
+            if let lastAt = recentActivityFingerprintAt[fingerprint],
+               now.timeIntervalSince(lastAt) < dedupeWindow {
+                if updateSummary {
+                    lastActionSummary = "\(title): \(message)"
+                }
+                return
+            }
+            recentActivityFingerprintAt[fingerprint] = now
+            recentActivityFingerprintAt = recentActivityFingerprintAt.filter { now.timeIntervalSince($0.value) < 600 }
+        }
+
         let entry = ActivityEntry(level: level, title: title, message: message, detail: detail)
         activities.insert(entry, at: 0)
         if activities.count > 50 {
@@ -4893,6 +4910,20 @@ final class ToolkitViewModel: ObservableObject {
         if updateSummary {
             lastActionSummary = "\(title): \(message)"
         }
+    }
+
+    private func activityDedupeWindow(level: ActivityLevel, title: String, updateSummary: Bool) -> TimeInterval {
+        if title == "状态探测" {
+            return 120
+        }
+        if !updateSummary, (level == .warning || level == .error) {
+            return 60
+        }
+        return 0
+    }
+
+    private func activityFingerprint(level: ActivityLevel, title: String, message: String, detail: String?) -> String {
+        "\(level.rawValue)\n\(title)\n\(message)\n\(detail ?? "")"
     }
 
     func presentInlineError(_ message: String) {
@@ -5380,12 +5411,21 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     func sendUserNotification(title: String, message: String) {
+        let now = Date()
+        let fingerprint = "\(title)\n\(message)"
+        if let lastAt = recentUserNotificationAt[fingerprint],
+           now.timeIntervalSince(lastAt) < 60 {
+            return
+        }
+        recentUserNotificationAt[fingerprint] = now
+        recentUserNotificationAt = recentUserNotificationAt.filter { now.timeIntervalSince($0.value) < 600 }
+
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = message
         content.sound = .default
         let request = UNNotificationRequest(
-            identifier: UUID().uuidString,
+            identifier: "dbt-agent-\(fingerprint.hashValue)",
             content: content,
             trigger: nil
         )
@@ -6515,7 +6555,7 @@ final class ToolkitViewModel: ObservableObject {
         let now = Date()
         if lastBackgroundStatusNotificationMessage == message,
            let lastAt = lastBackgroundStatusNotificationAt,
-           now.timeIntervalSince(lastAt) < 10 {
+           now.timeIntervalSince(lastAt) < 60 {
             return
         }
         lastBackgroundStatusNotificationMessage = message
