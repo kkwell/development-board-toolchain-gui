@@ -1241,8 +1241,10 @@ final class ToolkitViewModel: ObservableObject {
     private var lastRefreshErrorSignature = ""
     private var lastSnapshot: StatusSnapshot?
     private var statusRefreshTask: Task<Void, Never>?
+    private var lastStatusRefreshStartedAt: Date?
     private var queuedStatusRefreshPending = false
     private var queuedStatusRefreshSilent = true
+    private var queuedStatusRefreshForce = false
     private var eventTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
     private var transportMonitorTask: Task<Void, Never>?
@@ -1295,7 +1297,7 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     private var usesEventDrivenStatus: Bool {
-        false
+        true
     }
 
     var rp2350ModeTransitionActive: Bool {
@@ -4551,7 +4553,7 @@ final class ToolkitViewModel: ObservableObject {
         let route = currentOperationRoute()
         switch precondition {
         case .checkHost:
-            refreshStatus(silent: true)
+            refreshStatus(silent: true, force: true)
             return nil
 
         case .ensureUSBNet:
@@ -5514,7 +5516,7 @@ final class ToolkitViewModel: ObservableObject {
             appendActivity(level: .error, title: task.action ?? "任务", message: "执行失败", detail: detail)
             sendUserNotification(title: task.action ?? "任务", message: "执行失败")
         }
-        refreshStatus(silent: true)
+        refreshStatus(silent: true, force: true)
         scheduleFollowUpStatusRefreshes(for: task)
         Task {
             await refreshDevelopmentInstallStatus()
@@ -5537,9 +5539,9 @@ final class ToolkitViewModel: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             try? await Task.sleep(for: .milliseconds(700))
-            self.refreshStatus(silent: true)
+            self.refreshStatus(silent: true, force: true)
             try? await Task.sleep(for: .milliseconds(900))
-            self.refreshStatus(silent: true)
+            self.refreshStatus(silent: true, force: true)
         }
     }
 
@@ -5997,7 +5999,7 @@ final class ToolkitViewModel: ObservableObject {
             lastSnapshot = nil
             status = nil
             await ensureLocalAgentStartedIfNeeded()
-            refreshStatus(silent: true)
+            refreshStatus(silent: true, force: true)
             busy = false
         }
     }
@@ -6176,7 +6178,7 @@ final class ToolkitViewModel: ObservableObject {
         systemMonitor?.start()
         startLocalAgentMonitor()
         Task {
-            refreshStatus(silent: true)
+            refreshStatus(silent: true, force: true)
             await refreshDevelopmentInstallStatus()
         }
     }
@@ -6234,7 +6236,7 @@ final class ToolkitViewModel: ObservableObject {
             guard let self, !Task.isCancelled else {
                 return
             }
-            self.refreshStatus(silent: true)
+            self.refreshStatus(silent: true, force: true)
         }
     }
 
@@ -6243,12 +6245,36 @@ final class ToolkitViewModel: ObservableObject {
         localAgentMonitorTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
-                if !self.isFlashTaskRunning {
+                if !self.isFlashTaskRunning, self.statusRefreshTask == nil {
                     self.refreshStatus(silent: true)
                 }
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .seconds(self.localAgentMonitorInterval()))
             }
         }
+    }
+
+    private func localAgentMonitorInterval() -> TimeInterval {
+        if isFlashTaskRunning {
+            return 4
+        }
+        if !localAgentRunning || status == nil {
+            return 3
+        }
+        if !pendingTaskTitle.isEmpty {
+            return 3
+        }
+        if let currentTask, currentTask.status != "finished" {
+            return 3
+        }
+        return 12
+    }
+
+    private func shouldThrottleStatusRefresh(silent: Bool, force: Bool) -> Bool {
+        guard silent, !force, let lastStatusRefreshStartedAt else {
+            return false
+        }
+        let minimumInterval: TimeInterval = (localAgentRunning && status != nil) ? 2.5 : 1.0
+        return Date().timeIntervalSince(lastStatusRefreshStartedAt) < minimumInterval
     }
 
     func applyTransientUSBStateIfNeeded() {
@@ -6480,21 +6506,29 @@ final class ToolkitViewModel: ObservableObject {
         watchdogTask = nil
     }
 
-    func refreshStatus(silent: Bool = false) {
+    func refreshStatus(silent: Bool = false, force: Bool = false) {
         if isFlashTaskRunning {
             return
         }
         if busy && !silent {
             return
         }
+        let forceRefresh = force || !silent
+        if shouldThrottleStatusRefresh(silent: silent, force: forceRefresh) {
+            return
+        }
         if statusRefreshTask != nil {
-            queuedStatusRefreshPending = true
-            queuedStatusRefreshSilent = queuedStatusRefreshSilent && silent
+            if forceRefresh {
+                queuedStatusRefreshPending = true
+                queuedStatusRefreshSilent = queuedStatusRefreshSilent && silent
+                queuedStatusRefreshForce = true
+            }
             return
         }
         if !silent {
             busy = true
         }
+        lastStatusRefreshStartedAt = Date()
         statusRefreshTask = Task { @MainActor [weak self] in
             guard let self else {
                 return
@@ -6502,14 +6536,16 @@ final class ToolkitViewModel: ObservableObject {
             defer {
                 let shouldReplay = self.queuedStatusRefreshPending
                 let replaySilent = self.queuedStatusRefreshSilent
+                let replayForce = self.queuedStatusRefreshForce
                 self.queuedStatusRefreshPending = false
                 self.queuedStatusRefreshSilent = true
+                self.queuedStatusRefreshForce = false
                 self.statusRefreshTask = nil
                 if !silent {
                     self.busy = false
                 }
                 if shouldReplay {
-                    self.refreshStatus(silent: replaySilent)
+                    self.refreshStatus(silent: replaySilent, force: replayForce)
                 }
             }
             await ensureLocalAgentStartedIfNeeded()
@@ -6610,7 +6646,7 @@ final class ToolkitViewModel: ObservableObject {
                 if transitionTracking {
                     startTransitionWatch(reason: title, duration: 14, step: 1.0)
                 }
-                refreshStatus(silent: true)
+                refreshStatus(silent: true, force: true)
             } catch {
                 let detail = error.localizedDescription
                 pendingTaskTitle = ""
@@ -6693,7 +6729,7 @@ final class ToolkitViewModel: ObservableObject {
                     detail: task.output_tail ?? task.log_path
                 )
                 startTransitionWatch(reason: "network", duration: 14, step: 1.0)
-                refreshStatus(silent: true)
+                refreshStatus(silent: true, force: true)
             } catch {
                 pendingTaskTitle = ""
                 busy = false
@@ -6754,7 +6790,7 @@ final class ToolkitViewModel: ObservableObject {
                 )
                 startTransitionWatch(reason: "网络权限安装", duration: 14, step: 1.0)
                 sendUserNotification(title: "网络权限安装", message: "主机 USB 网络权限已安装")
-                refreshStatus(silent: true)
+                refreshStatus(silent: true, force: true)
             } catch {
                 let detail = error.localizedDescription
                 pendingTaskTitle = ""
@@ -7595,7 +7631,7 @@ final class ToolkitViewModel: ObservableObject {
 
     func reconnectMonitoring() {
         lastEventAt = Date()
-        refreshStatus(silent: true)
+        refreshStatus(silent: true, force: true)
     }
 
     func browseFile(assign: @escaping (String) -> Void) {
@@ -14367,7 +14403,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             return
         }
         installClickMonitors()
-        vm.refreshStatus(silent: true)
+        vm.refreshStatus(silent: true, force: true)
         Task { await vm.refreshDevelopmentInstallStatus() }
         popover.contentSize = BoardCatalogLayout.popoverSize
         if let hosting = popover.contentViewController as? NSHostingController<ContentView> {

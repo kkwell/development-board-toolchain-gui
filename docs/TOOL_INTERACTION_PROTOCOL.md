@@ -99,6 +99,17 @@ If `GET /v1/status/summary` times out but `GET /healthz` still succeeds, the GUI
 must keep the local-agent state online and report only a temporary status refresh
 delay. A status-refresh failure is not the same thing as local agent absence.
 
+GUI refresh cadence:
+
+- USB and network system events should trigger an immediate forced status refresh
+  after a short debounce.
+- The always-on background monitor is only a low-frequency health heartbeat. It
+  should read `GET /v1/status/summary` through `dbt-agentd`, avoid direct
+  hardware probes, and avoid queueing another refresh while one is already in
+  flight.
+- Manual user actions, popover opening, and job completion may force a refresh so
+  the UI stays responsive without restoring a one-second idle polling loop.
+
 ## Local Agent Endpoints
 
 Current local agent base:
