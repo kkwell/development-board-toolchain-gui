@@ -11,6 +11,8 @@ RES_DIR="${APP_DIR}/Contents/Resources"
 BIN_PATH="${BIN_DIR}/${APP_NAME}"
 ICON_SOURCE="${REPO_ROOT}/assets/app-logo.png"
 INFO_LOGO_SOURCE="${REPO_ROOT}/assets/app-logo.png"
+INFO_LOGO_LIGHT_SOURCE="${REPO_ROOT}/assets/app-logo-light.png"
+INFO_LOGO_DARK_SOURCE="${REPO_ROOT}/assets/app-logo-dark.png"
 ALIPAY_QR_SOURCE="${REPO_ROOT}/assets/zhifubao.JPG"
 WECHAT_QR_SOURCE="${REPO_ROOT}/assets/weixin.JPG"
 PICO2W_PREVIEW_SOURCE="${REPO_ROOT}/assets/Pico2WPreview.png"
@@ -151,6 +153,16 @@ build_icon
 if [[ -f "${INFO_LOGO_SOURCE}" ]]; then
   echo "Copying info logo"
   cp -f "${INFO_LOGO_SOURCE}" "${RES_DIR}/AppInfoLogo.png"
+fi
+
+if [[ -f "${INFO_LOGO_LIGHT_SOURCE}" ]]; then
+  echo "Copying light info logo"
+  cp -f "${INFO_LOGO_LIGHT_SOURCE}" "${RES_DIR}/AppInfoLogoLight.png"
+fi
+
+if [[ -f "${INFO_LOGO_DARK_SOURCE}" ]]; then
+  echo "Copying dark info logo"
+  cp -f "${INFO_LOGO_DARK_SOURCE}" "${RES_DIR}/AppInfoLogoDark.png"
 fi
 
 if [[ -f "${ALIPAY_QR_SOURCE}" ]]; then

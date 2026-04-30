@@ -10133,6 +10133,8 @@ enum ToolkitInfoPage {
 }
 
 struct ToolkitInfoLogoView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     let size: CGFloat
     let cornerRadius: CGFloat
 
@@ -10142,10 +10144,14 @@ struct ToolkitInfoLogoView: View {
     }
 
     private var logoImage: NSImage? {
-        guard let url = Bundle.main.url(forResource: "AppInfoLogo", withExtension: "png") else {
-            return nil
+        let preferredResource = colorScheme == .dark ? "AppInfoLogoDark" : "AppInfoLogoLight"
+        for resource in [preferredResource, "AppInfoLogo", "AppInfoLogoLight"] {
+            if let url = Bundle.main.url(forResource: resource, withExtension: "png"),
+               let image = NSImage(contentsOf: url) {
+                return image
+            }
         }
-        return NSImage(contentsOf: url)
+        return nil
     }
 
     var body: some View {
