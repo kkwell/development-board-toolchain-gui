@@ -38,6 +38,13 @@ Board-specific GUI notes:
 - `docs/boards/TaishanPi_GUI.md`
 - `docs/boards/ColorEasyPICO2_GUI.md`
 
+Board visual assets:
+
+- detail pages must resolve 3D model assets and single-image assets through one shared path resolver
+- model assets are preferred when available; single-board preview images are the fallback for boards without 3D models, such as Pico 2 W
+- the app build bundles lightweight board visual assets under `Contents/Resources/BoardAssets/boards/<BoardID>/assets/`
+- installed runtime paths remain supported, especially `~/Library/development-board-toolchain/families/<family>/boards/<board>/.../plugin/assets/`
+
 Working rule:
 
 - if a GUI task can be solved entirely inside this repository, do not reach outside this repository

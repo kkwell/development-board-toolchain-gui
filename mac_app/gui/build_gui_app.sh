@@ -16,6 +16,8 @@ INFO_LOGO_DARK_SOURCE="${REPO_ROOT}/assets/app-logo-dark.png"
 ALIPAY_QR_SOURCE="${REPO_ROOT}/assets/zhifubao.JPG"
 WECHAT_QR_SOURCE="${REPO_ROOT}/assets/weixin.JPG"
 PICO2W_PREVIEW_SOURCE="${REPO_ROOT}/assets/Pico2WPreview.png"
+BOARD_ASSETS_SOURCE="${REPO_ROOT}/board_plugins/boards"
+BOARD_ASSETS_DEST="${RES_DIR}/BoardAssets/boards"
 ICONSET_DIR="${BUILD_DIR}/AppIcon.iconset"
 ICON_MASTER="${BUILD_DIR}/AppIcon-master.png"
 DEFAULT_APP_VERSION="$(tr -d '\n' < "${REPO_ROOT}/VERSION" 2>/dev/null || printf '1.0.0')"
@@ -178,6 +180,17 @@ fi
 if [[ -f "${PICO2W_PREVIEW_SOURCE}" ]]; then
   echo "Copying Pico 2 W preview"
   cp -f "${PICO2W_PREVIEW_SOURCE}" "${RES_DIR}/Pico2WPreview.png"
+fi
+
+if [[ -d "${BOARD_ASSETS_SOURCE}" ]]; then
+  echo "Copying board visual assets"
+  mkdir -p "${BOARD_ASSETS_DEST}"
+  for board_dir in "${BOARD_ASSETS_SOURCE}"/*; do
+    [[ -d "${board_dir}/assets" ]] || continue
+    board_id="$(basename "${board_dir}")"
+    mkdir -p "${BOARD_ASSETS_DEST}/${board_id}"
+    ditto "${board_dir}/assets" "${BOARD_ASSETS_DEST}/${board_id}/assets"
+  done
 fi
 
 echo "Packaging app archive"

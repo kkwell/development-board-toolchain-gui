@@ -11503,6 +11503,11 @@ private func boardModelRootURL(for board: SupportedBoard) -> URL? {
     let supportBaseRoot = ToolkitViewModel.resolveToolkitSupportRoot()
     let supportRoot = supportBaseRoot.appendingPathComponent("plugins", isDirectory: true)
     let sharedRuntimeRoot = supportBaseRoot.appendingPathComponent("runtime", isDirectory: true)
+    let bundledBoardAssetsRoot = Bundle.main.resourceURL?
+        .appendingPathComponent("BoardAssets", isDirectory: true)
+        .appendingPathComponent("boards", isDirectory: true)
+        .appendingPathComponent(board.id, isDirectory: true)
+        .appendingPathComponent("assets", isDirectory: true)
     let familyBoardAssetsRoot: URL? = {
         if isRP2350BoardID(board.id) {
             return supportBaseRoot
@@ -11522,31 +11527,80 @@ private func boardModelRootURL(for board: SupportedBoard) -> URL? {
         }
         return nil
     }()
+    let familyBoardPluginRoot: URL? = {
+        if isRP2350BoardID(board.id) {
+            return supportBaseRoot
+                .appendingPathComponent("families", isDirectory: true)
+                .appendingPathComponent("rp2350", isDirectory: true)
+                .appendingPathComponent("boards", isDirectory: true)
+                .appendingPathComponent(board.id, isDirectory: true)
+                .appendingPathComponent("plugin", isDirectory: true)
+        }
+        if board.id == "TaishanPi" {
+            return supportBaseRoot
+                .appendingPathComponent("families", isDirectory: true)
+                .appendingPathComponent("rk356x", isDirectory: true)
+                .appendingPathComponent("boards", isDirectory: true)
+                .appendingPathComponent(board.id, isDirectory: true)
+                .appendingPathComponent("variants", isDirectory: true)
+                .appendingPathComponent(directoryName, isDirectory: true)
+                .appendingPathComponent("plugin", isDirectory: true)
+        }
+        return nil
+    }()
+    let runtimeSeedPluginRoot: URL? = {
+        if board.id == "TaishanPi" {
+            return sharedRuntimeRoot
+                .appendingPathComponent("builtin-plugin-seed", isDirectory: true)
+                .appendingPathComponent(board.id, isDirectory: true)
+                .appendingPathComponent("variants", isDirectory: true)
+                .appendingPathComponent(directoryName, isDirectory: true)
+                .appendingPathComponent("plugin", isDirectory: true)
+        }
+        return sharedRuntimeRoot
+            .appendingPathComponent("builtin-plugin-seed", isDirectory: true)
+            .appendingPathComponent(board.id, isDirectory: true)
+    }()
 
     let candidates: [URL] = [
+        bundledBoardAssetsRoot?
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent(directoryName, isDirectory: true),
+        familyBoardPluginRoot?
+            .appendingPathComponent("assets", isDirectory: true)
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent(directoryName, isDirectory: true),
         familyBoardAssetsRoot?
             .appendingPathComponent("models", isDirectory: true)
             .appendingPathComponent(directoryName, isDirectory: true),
         supportRoot
             .appendingPathComponent("user", isDirectory: true)
             .appendingPathComponent(board.id, isDirectory: true)
-            .appendingPathComponent("assets/models", isDirectory: true)
+            .appendingPathComponent("assets", isDirectory: true)
+            .appendingPathComponent("models", isDirectory: true)
             .appendingPathComponent(directoryName, isDirectory: true),
         supportRoot
             .appendingPathComponent("builtin", isDirectory: true)
             .appendingPathComponent(board.id, isDirectory: true)
-            .appendingPathComponent("assets/models", isDirectory: true)
+            .appendingPathComponent("assets", isDirectory: true)
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent(directoryName, isDirectory: true),
+        runtimeSeedPluginRoot?
+            .appendingPathComponent("assets", isDirectory: true)
+            .appendingPathComponent("models", isDirectory: true)
             .appendingPathComponent(directoryName, isDirectory: true),
         sharedRuntimeRoot
             .appendingPathComponent("builtin-plugin-seed", isDirectory: true)
             .appendingPathComponent(board.id, isDirectory: true)
-            .appendingPathComponent("assets/models", isDirectory: true)
+            .appendingPathComponent("assets", isDirectory: true)
+            .appendingPathComponent("models", isDirectory: true)
             .appendingPathComponent(directoryName, isDirectory: true),
         sharedRuntimeRoot
             .appendingPathComponent("board_plugins", isDirectory: true)
             .appendingPathComponent("boards", isDirectory: true)
             .appendingPathComponent(board.id, isDirectory: true)
-            .appendingPathComponent("assets/models", isDirectory: true)
+            .appendingPathComponent("assets", isDirectory: true)
+            .appendingPathComponent("models", isDirectory: true)
             .appendingPathComponent(directoryName, isDirectory: true),
     ].compactMap { $0 }
 
@@ -11572,13 +11626,158 @@ private func boardModelOBJURL(for board: SupportedBoard) -> URL? {
     return contents.first(where: { $0.pathExtension.lowercased() == "obj" })
 }
 
-private func boardPreviewImageURL(for board: SupportedBoard) -> URL? {
-    switch board.id {
-    case "Pico2W":
-        return Bundle.main.url(forResource: "Pico2WPreview", withExtension: "png")
-    default:
-        return nil
+private func firstBoardPreviewImageURL(in assetRoot: URL, board: SupportedBoard) -> URL? {
+    let fm = FileManager.default
+    let pluginID = pluginBoardID(forLocalBoardID: board.id) ?? board.id
+    let directories = [
+        assetRoot.appendingPathComponent("images", isDirectory: true),
+        assetRoot,
+    ]
+    let baseNames = [
+        "preview",
+        "board",
+        "\(board.id)Preview",
+        "\(pluginID)Preview",
+    ].map { $0.lowercased() }
+    let extensions = ["png", "jpg", "jpeg"]
+
+    for directory in directories where fm.fileExists(atPath: directory.path) {
+        for baseName in baseNames {
+            for ext in extensions {
+                let candidate = directory.appendingPathComponent(baseName).appendingPathExtension(ext)
+                if fm.fileExists(atPath: candidate.path) {
+                    return candidate
+                }
+            }
+        }
+
+        let contents = (try? fm.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        if let preview = contents.first(where: { url in
+            extensions.contains(url.pathExtension.lowercased()) &&
+                url.deletingPathExtension().lastPathComponent.lowercased().contains("preview")
+        }) {
+            return preview
+        }
+        if let image = contents.first(where: { extensions.contains($0.pathExtension.lowercased()) }) {
+            return image
+        }
     }
+    return nil
+}
+
+private func boardPreviewImageURL(for board: SupportedBoard) -> URL? {
+    if board.id == "Pico2W",
+       let bundledPreview = Bundle.main.url(forResource: "Pico2WPreview", withExtension: "png") {
+        return bundledPreview
+    }
+
+    let supportBaseRoot = ToolkitViewModel.resolveToolkitSupportRoot()
+    let sharedRuntimeRoot = supportBaseRoot.appendingPathComponent("runtime", isDirectory: true)
+    let pluginID = pluginBoardID(forLocalBoardID: board.id) ?? board.id
+    var assetRoots: [URL?] = [
+        Bundle.main.resourceURL?
+            .appendingPathComponent("BoardAssets", isDirectory: true)
+            .appendingPathComponent("boards", isDirectory: true)
+            .appendingPathComponent(board.id, isDirectory: true)
+            .appendingPathComponent("assets", isDirectory: true),
+        Bundle.main.resourceURL?
+            .appendingPathComponent("BoardAssets", isDirectory: true)
+            .appendingPathComponent("boards", isDirectory: true)
+            .appendingPathComponent(pluginID, isDirectory: true)
+            .appendingPathComponent("assets", isDirectory: true),
+        supportBaseRoot
+            .appendingPathComponent("plugins", isDirectory: true)
+            .appendingPathComponent("user", isDirectory: true)
+            .appendingPathComponent(pluginID, isDirectory: true)
+            .appendingPathComponent("assets", isDirectory: true),
+        supportBaseRoot
+            .appendingPathComponent("plugins", isDirectory: true)
+            .appendingPathComponent("builtin", isDirectory: true)
+            .appendingPathComponent(pluginID, isDirectory: true)
+            .appendingPathComponent("assets", isDirectory: true),
+        sharedRuntimeRoot
+            .appendingPathComponent("builtin-plugin-seed", isDirectory: true)
+            .appendingPathComponent(pluginID, isDirectory: true)
+            .appendingPathComponent("assets", isDirectory: true),
+        sharedRuntimeRoot
+            .appendingPathComponent("board_plugins", isDirectory: true)
+            .appendingPathComponent("boards", isDirectory: true)
+            .appendingPathComponent(pluginID, isDirectory: true)
+            .appendingPathComponent("assets", isDirectory: true),
+    ]
+    if isRP2350BoardID(pluginID) {
+        assetRoots.append(
+            supportBaseRoot
+                .appendingPathComponent("families", isDirectory: true)
+                .appendingPathComponent("rp2350", isDirectory: true)
+                .appendingPathComponent("boards", isDirectory: true)
+                .appendingPathComponent(pluginID, isDirectory: true)
+                .appendingPathComponent("assets", isDirectory: true)
+        )
+        assetRoots.append(
+            supportBaseRoot
+                .appendingPathComponent("families", isDirectory: true)
+                .appendingPathComponent("rp2350", isDirectory: true)
+                .appendingPathComponent("boards", isDirectory: true)
+                .appendingPathComponent(pluginID, isDirectory: true)
+                .appendingPathComponent("plugin", isDirectory: true)
+                .appendingPathComponent("assets", isDirectory: true)
+        )
+    } else if pluginID == "TaishanPi", let directoryName = board.modelDirectoryName {
+        assetRoots.append(
+            supportBaseRoot
+                .appendingPathComponent("families", isDirectory: true)
+                .appendingPathComponent("rk356x", isDirectory: true)
+                .appendingPathComponent("boards", isDirectory: true)
+                .appendingPathComponent("TaishanPi", isDirectory: true)
+                .appendingPathComponent("assets", isDirectory: true)
+        )
+        assetRoots.append(
+            supportBaseRoot
+                .appendingPathComponent("families", isDirectory: true)
+                .appendingPathComponent("rk356x", isDirectory: true)
+                .appendingPathComponent("boards", isDirectory: true)
+                .appendingPathComponent("TaishanPi", isDirectory: true)
+                .appendingPathComponent("variants", isDirectory: true)
+                .appendingPathComponent(directoryName, isDirectory: true)
+                .appendingPathComponent("plugin", isDirectory: true)
+                .appendingPathComponent("assets", isDirectory: true)
+        )
+    }
+
+    for root in assetRoots.compactMap({ $0 }) {
+        if let imageURL = firstBoardPreviewImageURL(in: root, board: board) {
+            return imageURL
+        }
+    }
+    return nil
+}
+
+private enum BoardVisualAsset {
+    case model(URL)
+    case image(NSImage)
+
+    var isModel: Bool {
+        if case .model = self {
+            return true
+        }
+        return false
+    }
+}
+
+private func boardVisualAsset(for board: SupportedBoard) -> BoardVisualAsset? {
+    if let modelURL = boardModelOBJURL(for: board) {
+        return .model(modelURL)
+    }
+    if let imageURL = boardPreviewImageURL(for: board),
+       let image = NSImage(contentsOf: imageURL) {
+        return .image(image)
+    }
+    return nil
 }
 
 private struct BoardModelPresentationProfile {
@@ -11999,18 +12198,16 @@ struct BoardModelPreviewCard: View {
         boardModelOBJURL(for: board) != nil
     }
 
-    private var previewImage: NSImage? {
-        guard let imageURL = boardPreviewImageURL(for: board) else {
-            return nil
-        }
-        return NSImage(contentsOf: imageURL)
+    private var visualAsset: BoardVisualAsset? {
+        boardVisualAsset(for: board)
     }
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
                 Group {
-                    if let previewImage {
+                    switch visualAsset {
+                    case .image(let previewImage):
                         Image(nsImage: previewImage)
                             .resizable()
                             .scaledToFit()
@@ -12028,7 +12225,7 @@ struct BoardModelPreviewCard: View {
                                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                                     .stroke(Color.white.opacity(0.12), lineWidth: 1)
                             )
-                    } else {
+                    case .model:
                         BoardModelSceneContainer(board: board, allowsZoom: false, doubleClickAction: doubleClickAction)
                             .frame(width: presentationProfile.previewSize, height: presentationProfile.previewSize)
                             .background(
@@ -12043,10 +12240,32 @@ struct BoardModelPreviewCard: View {
                                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                                     .stroke(Color.white.opacity(0.12), lineWidth: 1)
                             )
+                    case nil:
+                        VStack(spacing: 10) {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.system(size: 34, weight: .semibold))
+                                .foregroundStyle(Color.white.opacity(0.9))
+                            Text("暂无可展示资源")
+                                .font(.system(.caption, design: .rounded).weight(.semibold))
+                                .foregroundStyle(Color.white.opacity(0.92))
+                        }
+                        .frame(width: presentationProfile.previewSize, height: presentationProfile.previewSize)
+                        .background(
+                            LinearGradient(
+                                colors: presentationProfile.previewBackground,
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
                     }
                 }
 
-                Text(previewImage == nil ? "拖动旋转，双击可弹出独立窗口查看。" : "当前展示产品图片，等待后续 3D 模型资源。")
+                Text(hasModel ? "拖动旋转，双击可弹出独立窗口查看。" : (visualAsset == nil ? "当前没有找到模型或图片资源；安装或更新对应板卡资源后会自动恢复展示。" : "当前展示产品图片；该板卡补齐 3D 模型后会自动优先展示模型。"))
                     .font(.system(.caption, design: .rounded))
                     .foregroundStyle(.secondary)
             }
@@ -12056,13 +12275,18 @@ struct BoardModelPreviewCard: View {
                     .font(.system(.headline, design: .rounded).weight(.semibold))
 
                 VStack(alignment: .leading, spacing: 8) {
-                    if previewImage != nil {
+                    if !hasModel, visualAsset != nil {
                         Label("当前展示产品图片，后续补齐 3D 模型后会自动切回模型预览。", systemImage: "photo")
                         Label("当前图片用于确认外观与版型，不提供旋转和缩放交互。", systemImage: "rectangle.inset.filled")
                     } else {
-                        Label(hasModel ? "模型已加载，可围绕板子中心旋转查看。" : "当前使用占位模型，等待真实 3D 资源。", systemImage: hasModel ? "cube.transparent.fill" : "shippingbox.fill")
-                        Label("嵌入视图固定比例显示，双击后可在大图窗口中缩放。", systemImage: "plus.magnifyingglass")
-                        Label("背景和灯光已压低曝光，板卡轮廓会更稳定。", systemImage: "circle.lefthalf.filled")
+                        if hasModel {
+                            Label("模型已加载，可围绕板子中心旋转查看。", systemImage: "cube.transparent.fill")
+                            Label("嵌入视图固定比例显示，双击后可在大图窗口中缩放。", systemImage: "plus.magnifyingglass")
+                            Label("背景和灯光已压低曝光，板卡轮廓会更稳定。", systemImage: "circle.lefthalf.filled")
+                        } else {
+                            Label("当前没有找到模型或图片资源。", systemImage: "shippingbox.fill")
+                            Label("安装或更新对应板卡资源后，这里会自动恢复展示。", systemImage: "arrow.triangle.2.circlepath")
+                        }
                     }
                 }
                 .font(.system(.subheadline, design: .rounded))
@@ -12093,13 +12317,21 @@ struct BoardModelStandaloneWindowView: View {
     let board: SupportedBoard
     let closeAction: () -> Void
 
+    private var visualAsset: BoardVisualAsset? {
+        boardVisualAsset(for: board)
+    }
+
+    private var hasModel: Bool {
+        visualAsset?.isModel == true
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(board.displayName)
                         .font(.system(.title2, design: .rounded).weight(.bold))
-                    Text("独立 3D 视图")
+                    Text(hasModel ? "独立 3D 视图" : "开发板外观")
                         .font(.system(.subheadline, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
@@ -12109,22 +12341,43 @@ struct BoardModelStandaloneWindowView: View {
                     .tint(.blue)
             }
 
-            BoardModelSceneContainer(board: board, allowsZoom: true, doubleClickAction: nil)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(
-                    LinearGradient(
-                        colors: boardModelPresentationProfile(for: board).previewBackground,
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
+            Group {
+                switch visualAsset {
+                case .model:
+                    BoardModelSceneContainer(board: board, allowsZoom: true, doubleClickAction: nil)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .image(let previewImage):
+                    Image(nsImage: previewImage)
+                        .resizable()
+                        .scaledToFit()
+                        .padding(28)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case nil:
+                    VStack(spacing: 12) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.system(size: 46, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(0.88))
+                        Text("暂无可展示资源")
+                            .font(.system(.headline, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Color.white.opacity(0.92))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .background(
+                LinearGradient(
+                    colors: boardModelPresentationProfile(for: board).previewBackground,
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            )
 
-            Text("拖动旋转，滚轮缩放。视角围绕模型中心。")
+            Text(hasModel ? "拖动旋转，滚轮缩放。视角围绕模型中心。" : "当前展示产品图片；该板卡提供 3D 模型资源后会自动切换到模型视图。")
                 .font(.system(.caption, design: .rounded))
                 .foregroundStyle(.secondary)
         }
@@ -12889,7 +13142,8 @@ struct SupportedBoardDetailView: View {
         switch section {
         case .overview:
             HStack(alignment: .top, spacing: 18) {
-                let previewImage = boardPreviewImageURL(for: board).flatMap(NSImage.init(contentsOf:))
+                let visualAsset = boardVisualAsset(for: board)
+                let hasModelAsset = visualAsset?.isModel == true
                 VStack(alignment: .leading, spacing: 8) {
                     ZStack {
                         LinearGradient(
@@ -12898,7 +13152,8 @@ struct SupportedBoardDetailView: View {
                             endPoint: .bottomTrailing
                         )
 
-                        if let previewImage {
+                        switch visualAsset {
+                        case .image(let previewImage):
                             Image(nsImage: previewImage)
                                 .resizable()
                                 .scaledToFit()
@@ -12907,7 +13162,7 @@ struct SupportedBoardDetailView: View {
                                     height: boardModelPresentationProfile(for: board).previewSize
                                 )
                                 .padding(18)
-                        } else {
+                        case .model:
                             BoardModelSceneContainer(
                                 board: board,
                                 allowsZoom: false,
@@ -12920,9 +13175,19 @@ struct SupportedBoardDetailView: View {
                             )
                             .frame(width: boardModelPresentationProfile(for: board).previewSize, height: boardModelPresentationProfile(for: board).previewSize)
                             .opacity(overviewModelReady ? 1 : 0.001)
+                        case nil:
+                            VStack(spacing: 10) {
+                                Image(systemName: "photo.on.rectangle.angled")
+                                    .font(.system(size: 34, weight: .semibold))
+                                    .foregroundStyle(Color.white.opacity(0.9))
+                                Text("暂无可展示资源")
+                                    .font(.system(.caption, design: .rounded).weight(.semibold))
+                                    .foregroundStyle(Color.white.opacity(0.92))
+                            }
+                            .padding(18)
                         }
 
-                        if previewImage == nil && !overviewModelReady {
+                        if hasModelAsset && !overviewModelReady {
                             VStack(spacing: 10) {
                                 ProgressView()
                                     .controlSize(.regular)
@@ -12942,7 +13207,7 @@ struct SupportedBoardDetailView: View {
                             .stroke(Color.white.opacity(0.12), lineWidth: 1)
                     )
 
-                    Text(previewImage == nil ? "拖动旋转，双击可打开独立 3D 查看窗口。" : "当前展示产品图片，后续接入 3D 模型后会自动替换。")
+                    Text(hasModelAsset ? "拖动旋转，双击可打开独立 3D 查看窗口。" : (visualAsset == nil ? "当前没有找到模型或图片资源；安装或更新对应板卡资源后会自动恢复展示。" : "当前展示产品图片；如果该板卡提供 3D 模型，会自动优先展示模型。"))
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
@@ -14453,6 +14718,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     private func showBoardModelWindow(_ board: SupportedBoard) {
+        let titleSuffix = boardModelOBJURL(for: board) == nil ? "外观视图" : "3D 视图"
         let rootView = BoardModelStandaloneWindowView(
             board: board,
             closeAction: { [weak self] in
@@ -14461,7 +14727,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         )
 
         if let controller = boardModelWindowController, let window = controller.window {
-            window.title = "\(board.displayName) 3D 视图"
+            window.title = "\(board.displayName) \(titleSuffix)"
             window.contentViewController = NSHostingController(rootView: rootView)
             window.level = .statusBar
             if let popoverWindow = popover.contentViewController?.view.window, window.parent !== popoverWindow {
@@ -14480,7 +14746,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "\(board.displayName) 3D 视图"
+        window.title = "\(board.displayName) \(titleSuffix)"
         window.center()
         window.setContentSize(NSSize(width: 920, height: 720))
         window.level = .statusBar
