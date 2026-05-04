@@ -19,7 +19,7 @@ When `ColorEasyPICO2` is the detected board, the connected dashboard exposes the
 
 - `总览`
 - `固件`
-- `监控` only after the current runtime firmware answers the RP2350-Monitor `hello` command
+- `监控` after the current runtime firmware answers the RP2350-Monitor `hello` command; once detected, the page stays visible even if the selected USB/Wi-Fi control channel is temporarily unavailable
 - `通知`
 
 When multiple devices are connected:
@@ -69,12 +69,14 @@ Visible only when:
 - an RP2350 board is in runtime state
 - the runtime port is available as a USB CDC serial device
 - `hello` confirms the firmware supports RP2350-Monitor
+- after support is confirmed, transport failures are shown as link errors and must not remove the monitor tab
 
 Transport:
 
 - USB CDC newline-delimited JSON
 - Wi-Fi TCP newline-delimited JSON on the user-provided IP and port, normally port `4242`
 - USB and Wi-Fi can coexist; the GUI lets the user choose the active control channel
+- USB runtime serial is auto-probed in the background; Wi-Fi is probed only when the user applies the IP/port because the host may not be on the Pico Wi-Fi network yet
 - 115200 baud host-side serial setup when USB is selected
 - commands are serialized by the GUI to avoid corrupting the shared JSONL stream
 

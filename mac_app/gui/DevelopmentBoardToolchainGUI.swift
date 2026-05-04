@@ -927,6 +927,10 @@ struct RP2350MonitorState {
         return false
     }
 
+    var tabAvailable: Bool {
+        supported || firmwareVersion != "-" || firmwareBoard != "-" || !links.isEmpty
+    }
+
     var isProbing: Bool {
         if case .probing = availability {
             return true
@@ -943,6 +947,9 @@ struct RP2350MonitorState {
         case .supported:
             return "可用"
         case .unsupported:
+            if tabAvailable {
+                return "链路异常"
+            }
             return "不支持"
         }
     }
@@ -7927,10 +7934,14 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     private func scheduleRP2350MonitorProbeIfNeeded() {
+        guard rp2350MonitorTransportMode == "usb" else {
+            rp2350MonitorProbeTask?.cancel()
+            return
+        }
         guard let device = rp2350MonitorSerialDevice() else {
             rp2350MonitorProbeTask?.cancel()
             rp2350MonitorLastProbeDevice = ""
-            if rp2350Monitor.supported || rp2350Monitor.isProbing {
+            if rp2350Monitor.isProbing {
                 rp2350Monitor = RP2350MonitorState(
                     availability: .unsupported(rp2350MonitorTransportUnavailableMessage())
                 )
@@ -7994,11 +8005,20 @@ final class ToolkitViewModel: ObservableObject {
             }
         } catch {
             let message = error.localizedDescription
-            rp2350Monitor.availability = .unsupported("当前 Pico 固件未提供 RP2350-Monitor JSONL 协议：\(message)")
+            let knownMonitorProtocol = rp2350Monitor.tabAvailable
+            let detail = knownMonitorProtocol
+                ? "当前监控控制通道暂时不可用：\(message)"
+                : "当前 Pico 固件未提供 RP2350-Monitor JSONL 协议：\(message)"
+            rp2350Monitor.availability = .unsupported(detail)
             rp2350Monitor.lastResponse = message
             rp2350Monitor.lastUpdated = Date()
             if force {
-                appendActivity(level: .warning, title: "RP2350-Monitor", message: "当前固件不支持监控页", detail: message)
+                appendActivity(
+                    level: .warning,
+                    title: "RP2350-Monitor",
+                    message: knownMonitorProtocol ? "监控控制通道异常" : "当前固件不支持监控页",
+                    detail: message
+                )
             }
         }
     }
@@ -10725,7 +10745,7 @@ struct RP2350MonitorTab: View {
                     LazyVGrid(columns: actionColumns, spacing: 8) {
                         ActionTile(title: "刷新状态", subtitle: "读取 status / pins / channels", enabled: !vm.rp2350MonitorBusy, disabledReason: vm.rp2350MonitorBusy ? "命令执行中" : nil, symbol: "arrow.clockwise", action: { vm.rp2350MonitorRefresh() }, compact: true)
                         ActionTile(title: "重新探测", subtitle: "重新确认监控固件协议", enabled: !vm.rp2350MonitorBusy, disabledReason: vm.rp2350MonitorBusy ? "命令执行中" : nil, symbol: "stethoscope", action: { vm.rp2350MonitorProbe() }, compact: true)
-                        ActionTile(title: "详细监控", subtitle: "打开 UART/SPI/I2C/GPIO 采集窗口", enabled: vm.rp2350Monitor.supported, disabledReason: vm.rp2350Monitor.supported ? nil : "当前固件未检测到监控协议", symbol: "rectangle.expand.vertical", action: { RP2350MonitorWindowPresenter.shared.show(vm: vm, board: board) }, compact: true)
+                        ActionTile(title: "详细监控", subtitle: "打开 UART/SPI/I2C/GPIO 采集窗口", enabled: vm.rp2350Monitor.tabAvailable, disabledReason: vm.rp2350Monitor.tabAvailable ? nil : "当前固件未检测到监控协议", symbol: "rectangle.expand.vertical", action: { RP2350MonitorWindowPresenter.shared.show(vm: vm, board: board) }, compact: true)
                         ActionTile(title: "读取事件", subtitle: "回放固件环形缓冲", enabled: !vm.rp2350MonitorBusy, disabledReason: vm.rp2350MonitorBusy ? "命令执行中" : nil, symbol: "waveform.path", action: { vm.rp2350MonitorReadEvents() }, compact: true)
                     }
                     .padding(.top, 8)
@@ -10739,7 +10759,7 @@ struct RP2350MonitorTab: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
-            if !vm.rp2350Monitor.supported {
+            if !vm.rp2350Monitor.tabAvailable {
                 vm.rp2350MonitorProbe()
             }
         }
@@ -10953,7 +10973,7 @@ struct RP2350MonitorDetailWindowView: View {
         .frame(minWidth: 980, minHeight: 660)
         .background(Color.toolkitWindowBackground)
         .onAppear {
-            if !vm.rp2350Monitor.supported {
+            if !vm.rp2350Monitor.tabAvailable {
                 vm.rp2350MonitorProbe()
             } else {
                 vm.rp2350MonitorRefresh()
@@ -15893,7 +15913,7 @@ struct ConnectedBoardDashboardView: View {
                         Picker("", selection: $selectedTab) {
                             Text("总览").tag(0)
                             Text("固件").tag(1)
-                            if vm.rp2350Monitor.supported {
+                            if vm.rp2350Monitor.tabAvailable {
                                 Text("监控").tag(2)
                                 Text("通知").tag(3)
                             } else {
@@ -15906,7 +15926,7 @@ struct ConnectedBoardDashboardView: View {
                             ColorEasyPICO2OverviewTab(vm: vm, board: board)
                         } else if selectedTab == 1 {
                             ColorEasyPICO2FirmwareTab(vm: vm, board: board)
-                        } else if selectedTab == 2, vm.rp2350Monitor.supported {
+                        } else if selectedTab == 2, vm.rp2350Monitor.tabAvailable {
                             RP2350MonitorTab(vm: vm, board: board)
                         } else {
                             ActivityTab(vm: vm)
