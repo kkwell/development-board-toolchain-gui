@@ -1431,6 +1431,33 @@ final class ToolkitViewModel: ObservableObject {
     @Published var rp2350MonitorGPIODirection = "output"
     @Published var rp2350MonitorGPIOPull = "none"
     @Published var rp2350MonitorGPIOInitialLevel = false
+    @Published var rp2350MonitorGPIOAnalyzerChannelID = "5"
+    @Published var rp2350MonitorGPIOAnalyzerPin = "17"
+    @Published var rp2350MonitorGPIOAnalyzerPull = "up"
+    @Published var rp2350MonitorUARTChannelID = "1"
+    @Published var rp2350MonitorUARTInstance = "0"
+    @Published var rp2350MonitorUARTTX = "0"
+    @Published var rp2350MonitorUARTRX = "1"
+    @Published var rp2350MonitorUARTBaud = "115200"
+    @Published var rp2350MonitorUARTLoopback = false
+    @Published var rp2350MonitorUARTHex = "48656c6c6f"
+    @Published var rp2350MonitorSPIChannelID = "2"
+    @Published var rp2350MonitorSPIInstance = "0"
+    @Published var rp2350MonitorSPISCK = "2"
+    @Published var rp2350MonitorSPIMOSI = "3"
+    @Published var rp2350MonitorSPIMISO = "0"
+    @Published var rp2350MonitorSPICS = "1"
+    @Published var rp2350MonitorSPIBaud = "1000000"
+    @Published var rp2350MonitorSPIHex = "9f000000"
+    @Published var rp2350MonitorSPIReadLength = "4"
+    @Published var rp2350MonitorI2CChannelID = "3"
+    @Published var rp2350MonitorI2CInstance = "0"
+    @Published var rp2350MonitorI2CSDA = "4"
+    @Published var rp2350MonitorI2CSCL = "5"
+    @Published var rp2350MonitorI2CBaud = "100000"
+    @Published var rp2350MonitorI2CAddress = "0x50"
+    @Published var rp2350MonitorI2CWriteHex = "00"
+    @Published var rp2350MonitorI2CReadLength = "16"
     @Published var rp2350MonitorRawCommand = "{\"cmd\":\"status\"}"
     @Published var rp2350MonitorEventCount = "32"
     @Published var localArtifactsDir = ""
@@ -8019,6 +8046,302 @@ final class ToolkitViewModel: ObservableObject {
         }
     }
 
+    func rp2350MonitorConfigureGPIOAnalyzer() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                return
+            }
+            do {
+                let channelID = try parseMonitorInt(rp2350MonitorGPIOAnalyzerChannelID, label: "GPIO 输入通道 ID")
+                let gpio = try parseMonitorInt(rp2350MonitorGPIOAnalyzerPin, label: "GPIO 输入引脚")
+                await rp2350MonitorRunCommandSequence(
+                    title: "启动 GPIO 输入采集",
+                    commands: [
+                        [
+                            "cmd": "channel_config",
+                            "id": channelID,
+                            "type": "gpio",
+                            "gpio": gpio,
+                            "direction": "input",
+                            "pull": rp2350MonitorGPIOAnalyzerPull,
+                        ],
+                        ["cmd": "channel_start", "id": channelID],
+                    ],
+                    device: device,
+                    refreshAfter: true
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .warning, title: "RP2350-Monitor", message: "GPIO 输入配置无效", detail: detail)
+            }
+        }
+    }
+
+    func rp2350MonitorReadGPIOAnalyzerEvents() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                return
+            }
+            do {
+                let channelID = try parseMonitorInt(rp2350MonitorGPIOAnalyzerChannelID, label: "GPIO 输入通道 ID")
+                let count = max(1, min(Int(rp2350MonitorEventCount.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 32, 64))
+                await rp2350MonitorRunCommandSequence(
+                    title: "读取 GPIO 采集事件",
+                    commands: [["cmd": "events_read", "channel": channelID, "count": count]],
+                    device: device,
+                    refreshAfter: false
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .warning, title: "RP2350-Monitor", message: "GPIO 输入事件读取失败", detail: detail)
+            }
+        }
+    }
+
+    func rp2350MonitorReleaseGPIOAnalyzerChannel() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                return
+            }
+            do {
+                let channelID = try parseMonitorInt(rp2350MonitorGPIOAnalyzerChannelID, label: "GPIO 输入通道 ID")
+                await rp2350MonitorRunCommandSequence(
+                    title: "释放 GPIO 输入通道",
+                    commands: [["cmd": "channel_release", "id": channelID]],
+                    device: device,
+                    refreshAfter: true
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .warning, title: "RP2350-Monitor", message: "GPIO 输入通道释放失败", detail: detail)
+            }
+        }
+    }
+
+    func rp2350MonitorConfigureUART() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                return
+            }
+            do {
+                let channelID = try parseMonitorInt(rp2350MonitorUARTChannelID, label: "UART 通道 ID")
+                var config: [String: Any] = [
+                    "cmd": "channel_config",
+                    "id": channelID,
+                    "type": "uart",
+                    "instance": try parseMonitorInt(rp2350MonitorUARTInstance, label: "UART 实例"),
+                    "tx": try parseMonitorInt(rp2350MonitorUARTTX, label: "UART TX"),
+                    "rx": try parseMonitorInt(rp2350MonitorUARTRX, label: "UART RX"),
+                    "baud": try parseMonitorInt(rp2350MonitorUARTBaud, label: "UART 波特率"),
+                ]
+                if rp2350MonitorUARTLoopback {
+                    config["loopback"] = true
+                }
+                await rp2350MonitorRunCommandSequence(
+                    title: "配置 UART",
+                    commands: [config, ["cmd": "channel_start", "id": channelID]],
+                    device: device,
+                    refreshAfter: true
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .warning, title: "RP2350-Monitor", message: "UART 参数无效", detail: detail)
+            }
+        }
+    }
+
+    func rp2350MonitorUARTWrite() {
+        Task { @MainActor in
+            await rp2350MonitorChannelHexCommand(
+                title: "UART 写入",
+                command: "channel_write",
+                channelIDText: rp2350MonitorUARTChannelID,
+                hexText: rp2350MonitorUARTHex
+            )
+        }
+    }
+
+    func rp2350MonitorConfigureSPI() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                return
+            }
+            do {
+                let channelID = try parseMonitorInt(rp2350MonitorSPIChannelID, label: "SPI 通道 ID")
+                var config: [String: Any] = [
+                    "cmd": "channel_config",
+                    "id": channelID,
+                    "type": "spi",
+                    "instance": try parseMonitorInt(rp2350MonitorSPIInstance, label: "SPI 实例"),
+                    "sck": try parseMonitorInt(rp2350MonitorSPISCK, label: "SPI SCK"),
+                    "mosi": try parseMonitorInt(rp2350MonitorSPIMOSI, label: "SPI MOSI"),
+                    "miso": try parseMonitorInt(rp2350MonitorSPIMISO, label: "SPI MISO"),
+                    "baud": try parseMonitorInt(rp2350MonitorSPIBaud, label: "SPI 频率"),
+                ]
+                let csText = rp2350MonitorSPICS.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !csText.isEmpty {
+                    config["cs"] = try parseMonitorInt(csText, label: "SPI CS")
+                }
+                await rp2350MonitorRunCommandSequence(
+                    title: "配置 SPI",
+                    commands: [config, ["cmd": "channel_start", "id": channelID]],
+                    device: device,
+                    refreshAfter: true
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .warning, title: "RP2350-Monitor", message: "SPI 参数无效", detail: detail)
+            }
+        }
+    }
+
+    func rp2350MonitorSPITransfer() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                return
+            }
+            do {
+                let channelID = try parseMonitorInt(rp2350MonitorSPIChannelID, label: "SPI 通道 ID")
+                var command: [String: Any] = [
+                    "cmd": "spi_xfer",
+                    "id": channelID,
+                    "hex": rp2350MonitorSPIHex.trimmingCharacters(in: .whitespacesAndNewlines),
+                ]
+                let readLenText = rp2350MonitorSPIReadLength.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !readLenText.isEmpty {
+                    command["read_len"] = try parseMonitorInt(readLenText, label: "SPI 读取长度")
+                }
+                await rp2350MonitorRunCommandSequence(
+                    title: "SPI 传输",
+                    commands: [command],
+                    device: device,
+                    refreshAfter: true
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .warning, title: "RP2350-Monitor", message: "SPI 传输参数无效", detail: detail)
+            }
+        }
+    }
+
+    func rp2350MonitorConfigureI2C() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                return
+            }
+            do {
+                let channelID = try parseMonitorInt(rp2350MonitorI2CChannelID, label: "I2C 通道 ID")
+                let config: [String: Any] = [
+                    "cmd": "channel_config",
+                    "id": channelID,
+                    "type": "i2c",
+                    "instance": try parseMonitorInt(rp2350MonitorI2CInstance, label: "I2C 实例"),
+                    "sda": try parseMonitorInt(rp2350MonitorI2CSDA, label: "I2C SDA"),
+                    "scl": try parseMonitorInt(rp2350MonitorI2CSCL, label: "I2C SCL"),
+                    "baud": try parseMonitorInt(rp2350MonitorI2CBaud, label: "I2C 频率"),
+                ]
+                await rp2350MonitorRunCommandSequence(
+                    title: "配置 I2C",
+                    commands: [config, ["cmd": "channel_start", "id": channelID]],
+                    device: device,
+                    refreshAfter: true
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .warning, title: "RP2350-Monitor", message: "I2C 参数无效", detail: detail)
+            }
+        }
+    }
+
+    func rp2350MonitorI2CTransfer() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                return
+            }
+            do {
+                let command: [String: Any] = [
+                    "cmd": "i2c_xfer",
+                    "id": try parseMonitorInt(rp2350MonitorI2CChannelID, label: "I2C 通道 ID"),
+                    "addr": try parseMonitorInt(rp2350MonitorI2CAddress, label: "I2C 地址"),
+                    "write": rp2350MonitorI2CWriteHex.trimmingCharacters(in: .whitespacesAndNewlines),
+                    "read_len": try parseMonitorInt(rp2350MonitorI2CReadLength, label: "I2C 读取长度"),
+                ]
+                await rp2350MonitorRunCommandSequence(
+                    title: "I2C 传输",
+                    commands: [command],
+                    device: device,
+                    refreshAfter: true
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .warning, title: "RP2350-Monitor", message: "I2C 传输参数无效", detail: detail)
+            }
+        }
+    }
+
+    func rp2350MonitorStopOrReleaseChannel(channelIDText: String, release: Bool) {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                return
+            }
+            do {
+                let channelID = try parseMonitorInt(channelIDText, label: "通道 ID")
+                await rp2350MonitorRunCommandSequence(
+                    title: release ? "释放通道" : "停止通道",
+                    commands: [["cmd": release ? "channel_release" : "channel_stop", "id": channelID]],
+                    device: device,
+                    refreshAfter: true
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .warning, title: "RP2350-Monitor", message: "通道操作失败", detail: detail)
+            }
+        }
+    }
+
+    private func rp2350MonitorChannelHexCommand(
+        title: String,
+        command: String,
+        channelIDText: String,
+        hexText: String
+    ) async {
+        guard let device = rp2350MonitorSerialDevice() else {
+            rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+            return
+        }
+        do {
+            let channelID = try parseMonitorInt(channelIDText, label: "通道 ID")
+            await rp2350MonitorRunCommandSequence(
+                title: title,
+                commands: [["cmd": command, "id": channelID, "hex": hexText.trimmingCharacters(in: .whitespacesAndNewlines)]],
+                device: device,
+                refreshAfter: true
+            )
+        } catch {
+            let detail = error.localizedDescription
+            presentInlineError(detail)
+            appendActivity(level: .warning, title: "RP2350-Monitor", message: "\(title)失败", detail: detail)
+        }
+    }
+
     private func rp2350MonitorRunCommandSequence(
         title: String,
         commands: [[String: Any]],
@@ -8086,6 +8409,21 @@ final class ToolkitViewModel: ObservableObject {
             throw ToolkitGUIError.commandFailed("JSON 命令必须包含 cmd 字段。")
         }
         return dictionary
+    }
+
+    private func parseMonitorInt(_ text: String, label: String) throws -> Int {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ToolkitGUIError.commandFailed("\(label)不能为空。")
+        }
+        if trimmed.lowercased().hasPrefix("0x"),
+           let value = Int(trimmed.dropFirst(2), radix: 16) {
+            return value
+        }
+        if let value = Int(trimmed) {
+            return value
+        }
+        throw ToolkitGUIError.commandFailed("\(label)必须是十进制或 0x 十六进制整数。")
     }
 
     private func applyRP2350MonitorResults(
@@ -10129,15 +10467,6 @@ struct ColorEasyPICO2OverviewTab: View {
                 StatusCard(title: "当前状态", value: context.stateLabel, ok: picoConnected, symbol: "dot.radiowaves.left.and.right")
                 StatusCard(title: "串口设备", value: context.runtimePort, ok: runtimeReady, symbol: "terminal")
                 StatusCard(title: "DBT Agent", value: vm.localAgentRunning ? "在线" : "离线", ok: vm.localAgentRunning, symbol: "switch.2")
-                StatusCard(
-                    title: "监控协议",
-                    value: vm.rp2350Monitor.availabilityLabel,
-                    ok: vm.rp2350Monitor.supported,
-                    symbol: "waveform.path.ecg",
-                    helpText: vm.rp2350Monitor.availabilityDetail,
-                    actionLabel: "检测",
-                    onTap: { vm.rp2350MonitorProbe() }
-                )
             }
 
             GroupBox("单 USB 状态") {
@@ -10237,20 +10566,7 @@ struct RP2350MonitorTab: View {
         GridItem(.flexible(), spacing: 6),
     ]
 
-    private let actionColumns = [
-        GridItem(.flexible(), spacing: 8),
-        GridItem(.flexible(), spacing: 8),
-        GridItem(.flexible(), spacing: 8),
-    ]
-
-    private var lineText: String {
-        if vm.rp2350Monitor.recentLines.isEmpty {
-            return "等待 RP2350-Monitor JSONL 数据。"
-        }
-        return vm.rp2350Monitor.recentLines
-            .map { "[\($0.kind)] \($0.text)" }
-            .joined(separator: "\n")
-    }
+    private let actionColumns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
 
     private var lastUpdatedText: String {
         guard let date = vm.rp2350Monitor.lastUpdated else {
@@ -10268,68 +10584,36 @@ struct RP2350MonitorTab: View {
                 StatusCard(title: "缓冲队列", value: vm.rp2350Monitor.bufferSummary, ok: vm.rp2350Monitor.droppedEvents == 0, symbol: "tray.full")
             }
 
-            GroupBox("监控动作") {
-                LazyVGrid(columns: actionColumns, spacing: 8) {
-                    ActionTile(title: "刷新状态", subtitle: "读取 status、pins、channels", enabled: !vm.rp2350MonitorBusy, disabledReason: vm.rp2350MonitorBusy ? "命令执行中" : nil, symbol: "arrow.clockwise") { vm.rp2350MonitorRefresh() }
-                    ActionTile(title: "读取事件", subtitle: "从固件环形缓冲读取最近 JSONL 事件", enabled: !vm.rp2350MonitorBusy, disabledReason: vm.rp2350MonitorBusy ? "命令执行中" : nil, symbol: "waveform.path") { vm.rp2350MonitorReadEvents() }
-                    ActionTile(title: "重新探测", subtitle: "重新发送 hello，确认当前固件支持协议", enabled: !vm.rp2350MonitorBusy, disabledReason: vm.rp2350MonitorBusy ? "命令执行中" : nil, symbol: "stethoscope") { vm.rp2350MonitorProbe() }
-                }
-                .padding(.top, 8)
-            }
-
             HStack(alignment: .top, spacing: 12) {
-                GroupBox("GPIO 快速控制") {
+                GroupBox("监控状态") {
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            TextField("通道", text: $vm.rp2350MonitorGPIOChannelID)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 66)
-                            TextField("GPIO", text: $vm.rp2350MonitorGPIOPin)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 66)
-                            Picker("方向", selection: $vm.rp2350MonitorGPIODirection) {
-                                Text("输出").tag("output")
-                                Text("输入").tag("input")
-                            }
-                            .labelsHidden()
-                            .frame(width: 86)
-                            Picker("Pull", selection: $vm.rp2350MonitorGPIOPull) {
-                                Text("None").tag("none")
-                                Text("Up").tag("up")
-                                Text("Down").tag("down")
-                            }
-                            .labelsHidden()
-                            .frame(width: 92)
-                        }
-                        Toggle("初始高电平", isOn: $vm.rp2350MonitorGPIOInitialLevel)
+                        Text(vm.rp2350Monitor.availabilityDetail)
+                            .font(.system(.subheadline, design: .rounded))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("最近响应：\(vm.rp2350Monitor.lastResponse)")
                             .font(.caption)
-                        LazyVGrid(columns: actionColumns, spacing: 8) {
-                            ActionTile(title: "配置并启动", subtitle: "channel_config + channel_start", enabled: !vm.rp2350MonitorBusy, disabledReason: nil, symbol: "slider.horizontal.3", action: { vm.rp2350MonitorConfigureGPIO() }, compact: true)
-                            ActionTile(title: "读电平", subtitle: "gpio_read", enabled: !vm.rp2350MonitorBusy, disabledReason: nil, symbol: "eye", action: { vm.rp2350MonitorGPIORead() }, compact: true)
-                            ActionTile(title: "释放", subtitle: "channel_release", enabled: !vm.rp2350MonitorBusy, disabledReason: nil, symbol: "xmark.circle", action: { vm.rp2350MonitorReleaseChannel() }, compact: true)
-                            ActionTile(title: "输出高", subtitle: "gpio_write 1", enabled: !vm.rp2350MonitorBusy, disabledReason: nil, symbol: "arrow.up.circle", action: { vm.rp2350MonitorGPIOWrite(level: true) }, compact: true)
-                            ActionTile(title: "输出低", subtitle: "gpio_write 0", enabled: !vm.rp2350MonitorBusy, disabledReason: nil, symbol: "arrow.down.circle", action: { vm.rp2350MonitorGPIOWrite(level: false) }, compact: true)
-                        }
+                            .foregroundStyle(.secondary)
+                        Text("更新时间：\(lastUpdatedText)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.top, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                GroupBox("原始 JSONL 命令") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        TextEditor(text: $vm.rp2350MonitorRawCommand)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(minHeight: 72, maxHeight: 72)
-                            .scrollContentBackground(.hidden)
-                            .background(Color.toolkitInputBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                        ActionTile(title: "发送命令", subtitle: "支持 UART / SPI / I2C / GPIO / Wi-Fi 协议命令", enabled: !vm.rp2350MonitorBusy, disabledReason: vm.rp2350MonitorBusy ? "命令执行中" : nil, symbol: "paperplane", action: { vm.rp2350MonitorSendRawCommand() }, compact: true)
+                GroupBox("快捷操作") {
+                    LazyVGrid(columns: actionColumns, spacing: 8) {
+                        ActionTile(title: "刷新状态", subtitle: "读取 status / pins / channels", enabled: !vm.rp2350MonitorBusy, disabledReason: vm.rp2350MonitorBusy ? "命令执行中" : nil, symbol: "arrow.clockwise", action: { vm.rp2350MonitorRefresh() }, compact: true)
+                        ActionTile(title: "重新探测", subtitle: "重新确认监控固件协议", enabled: !vm.rp2350MonitorBusy, disabledReason: vm.rp2350MonitorBusy ? "命令执行中" : nil, symbol: "stethoscope", action: { vm.rp2350MonitorProbe() }, compact: true)
+                        ActionTile(title: "详细监控", subtitle: "打开 UART/SPI/I2C/GPIO 采集窗口", enabled: vm.rp2350Monitor.supported, disabledReason: vm.rp2350Monitor.supported ? nil : "当前固件未检测到监控协议", symbol: "rectangle.expand.vertical", action: { RP2350MonitorWindowPresenter.shared.show(vm: vm, board: board) }, compact: true)
+                        ActionTile(title: "读取事件", subtitle: "回放固件环形缓冲", enabled: !vm.rp2350MonitorBusy, disabledReason: vm.rp2350MonitorBusy ? "命令执行中" : nil, symbol: "waveform.path", action: { vm.rp2350MonitorReadEvents() }, compact: true)
                     }
                     .padding(.top, 8)
                 }
             }
 
             HStack(alignment: .top, spacing: 12) {
-                GroupBox("通道") {
+                GroupBox("当前通道") {
                     RP2350MonitorChannelList(channels: vm.rp2350Monitor.channels)
                         .padding(.top, 8)
                 }
@@ -10337,23 +10621,6 @@ struct RP2350MonitorTab: View {
                     RP2350MonitorPinGrid(pins: vm.rp2350Monitor.pins)
                         .padding(.top, 8)
                 }
-            }
-
-            GroupBox("JSONL 数据") {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("最近响应：\(vm.rp2350Monitor.lastResponse)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text("更新：\(lastUpdatedText)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    SelectableDetailTextView(text: lineText)
-                        .frame(minHeight: 118)
-                }
-                .padding(.top, 8)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -10454,6 +10721,563 @@ struct RP2350MonitorPinCell: View {
             RoundedRectangle(cornerRadius: 7)
                 .stroke(borderColor, lineWidth: 1)
         )
+    }
+}
+
+@MainActor
+final class RP2350MonitorWindowPresenter {
+    static let shared = RP2350MonitorWindowPresenter()
+    private var controller: NSWindowController?
+
+    func show(vm: ToolkitViewModel, board: SupportedBoard) {
+        let rootView = RP2350MonitorDetailWindowView(vm: vm, board: board)
+        if let controller, let window = controller.window {
+            window.contentViewController = NSHostingController(rootView: rootView)
+            controller.showWindow(nil)
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "\(board.displayName) 硬件监控"
+        window.center()
+        window.setContentSize(NSSize(width: 1120, height: 760))
+        window.minSize = NSSize(width: 980, height: 660)
+        window.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
+        window.contentViewController = NSHostingController(rootView: rootView)
+
+        let controller = NSWindowController(window: window)
+        self.controller = controller
+        controller.showWindow(nil)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self, weak window] _ in
+            Task { @MainActor [weak self, weak window] in
+                guard let self, window === self.controller?.window else {
+                    return
+                }
+                self.controller = nil
+            }
+        }
+    }
+}
+
+private enum RP2350MonitorDetailTab: String, CaseIterable, Identifiable {
+    case status = "状态"
+    case gpio = "GPIO 逻辑"
+    case uart = "UART"
+    case spi = "SPI"
+    case i2c = "I2C"
+    case raw = "JSONL"
+
+    var id: String { rawValue }
+}
+
+struct RP2350MonitorDetailWindowView: View {
+    @ObservedObject var vm: ToolkitViewModel
+    let board: SupportedBoard
+    @State private var selectedTab: RP2350MonitorDetailTab = .status
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(board.displayName) 硬件监控")
+                        .font(.title3.weight(.semibold))
+                    Text(vm.rp2350Monitor.availabilityDetail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(vm.rp2350MonitorBusy ? "命令执行中" : "就绪")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(vm.rp2350MonitorBusy ? .orange : .green)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background((vm.rp2350MonitorBusy ? Color.orange : Color.green).opacity(0.12))
+                    .clipShape(Capsule())
+            }
+
+            Picker("", selection: $selectedTab) {
+                ForEach(RP2350MonitorDetailTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Group {
+                switch selectedTab {
+                case .status:
+                    RP2350MonitorStatusPanel(vm: vm)
+                case .gpio:
+                    RP2350MonitorGPIOPanel(vm: vm)
+                case .uart:
+                    RP2350MonitorUARTPanel(vm: vm)
+                case .spi:
+                    RP2350MonitorSPIPanel(vm: vm)
+                case .i2c:
+                    RP2350MonitorI2CPanel(vm: vm)
+                case .raw:
+                    RP2350MonitorRawPanel(vm: vm)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(16)
+        .frame(minWidth: 980, minHeight: 660)
+        .background(Color.toolkitWindowBackground)
+        .onAppear {
+            if !vm.rp2350Monitor.supported {
+                vm.rp2350MonitorProbe()
+            } else {
+                vm.rp2350MonitorRefresh()
+            }
+        }
+    }
+}
+
+struct RP2350MonitorStatusPanel: View {
+    @ObservedObject var vm: ToolkitViewModel
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            LazyVGrid(columns: columns, spacing: 8) {
+                StatusCard(title: "固件", value: vm.rp2350Monitor.firmwareVersion, ok: vm.rp2350Monitor.supported, symbol: "cpu")
+                StatusCard(title: "串口", value: vm.rp2350Monitor.serialDevice.isEmpty ? "USB CDC" : vm.rp2350Monitor.serialDevice, ok: vm.rp2350Monitor.supported, symbol: "terminal")
+                StatusCard(title: "Wi-Fi", value: vm.rp2350Monitor.wifiSummary, ok: vm.rp2350Monitor.supported, symbol: "wifi")
+                StatusCard(title: "缓冲", value: vm.rp2350Monitor.bufferSummary, ok: vm.rp2350Monitor.droppedEvents == 0, symbol: "tray.full")
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                GroupBox("通道") {
+                    RP2350MonitorChannelList(channels: vm.rp2350Monitor.channels)
+                        .padding(.top, 8)
+                }
+                GroupBox("引脚") {
+                    RP2350MonitorPinGrid(pins: vm.rp2350Monitor.pins)
+                        .padding(.top, 8)
+                }
+            }
+
+            GroupBox("最近 JSONL") {
+                SelectableDetailTextView(text: RP2350MonitorLogFormatter.text(from: vm.rp2350Monitor.recentLines, empty: "等待 JSONL 数据。"))
+                    .frame(minHeight: 170, maxHeight: .infinity)
+                    .padding(.top, 8)
+            }
+        }
+    }
+}
+
+struct RP2350MonitorGPIOPanel: View {
+    @ObservedObject var vm: ToolkitViewModel
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) {
+                GroupBox("GPIO 输出控制") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            MonitorField("通道", text: $vm.rp2350MonitorGPIOChannelID, width: 70)
+                            MonitorField("GPIO", text: $vm.rp2350MonitorGPIOPin, width: 70)
+                            Picker("方向", selection: $vm.rp2350MonitorGPIODirection) {
+                                Text("输出").tag("output")
+                                Text("输入").tag("input")
+                            }
+                            .frame(width: 100)
+                            Picker("Pull", selection: $vm.rp2350MonitorGPIOPull) {
+                                Text("None").tag("none")
+                                Text("Up").tag("up")
+                                Text("Down").tag("down")
+                            }
+                            .frame(width: 110)
+                        }
+                        Toggle("初始高电平", isOn: $vm.rp2350MonitorGPIOInitialLevel)
+                            .font(.caption)
+                        HStack(spacing: 8) {
+                            CompactMonitorButton("配置启动", systemImage: "slider.horizontal.3", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorConfigureGPIO() }
+                            CompactMonitorButton("读电平", systemImage: "eye", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorGPIORead() }
+                            CompactMonitorButton("输出高", systemImage: "arrow.up.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorGPIOWrite(level: true) }
+                            CompactMonitorButton("输出低", systemImage: "arrow.down.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorGPIOWrite(level: false) }
+                            CompactMonitorButton("释放", systemImage: "xmark.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorReleaseChannel() }
+                        }
+                    }
+                    .padding(.top, 8)
+                }
+
+                GroupBox("GPIO 输入逻辑分析") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            MonitorField("通道", text: $vm.rp2350MonitorGPIOAnalyzerChannelID, width: 70)
+                            MonitorField("GPIO", text: $vm.rp2350MonitorGPIOAnalyzerPin, width: 70)
+                            Picker("Pull", selection: $vm.rp2350MonitorGPIOAnalyzerPull) {
+                                Text("None").tag("none")
+                                Text("Up").tag("up")
+                                Text("Down").tag("down")
+                            }
+                            .frame(width: 110)
+                            MonitorField("事件数", text: $vm.rp2350MonitorEventCount, width: 80)
+                        }
+                        HStack(spacing: 8) {
+                            CompactMonitorButton("启动采集", systemImage: "record.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorConfigureGPIOAnalyzer() }
+                            CompactMonitorButton("读取事件", systemImage: "waveform.path", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorReadGPIOAnalyzerEvents() }
+                            CompactMonitorButton("释放输入", systemImage: "stop.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorReleaseGPIOAnalyzerChannel() }
+                        }
+                    }
+                    .padding(.top, 8)
+                }
+            }
+            .frame(width: 470, alignment: .topLeading)
+
+            VStack(alignment: .leading, spacing: 12) {
+                GroupBox("波形") {
+                    RP2350LogicWaveform(samples: RP2350MonitorLogFormatter.gpioSamples(
+                        from: vm.rp2350Monitor.recentLines,
+                        channelText: vm.rp2350MonitorGPIOAnalyzerChannelID
+                    ))
+                    .frame(height: 210)
+                    .padding(.top, 8)
+                }
+                GroupBox("GPIO 事件") {
+                    SelectableDetailTextView(text: RP2350MonitorLogFormatter.filteredText(
+                        from: vm.rp2350Monitor.recentLines,
+                        token: "\"proto\":\"gpio\"",
+                        empty: "等待 GPIO 事件。"
+                    ))
+                    .frame(minHeight: 260, maxHeight: .infinity)
+                    .padding(.top, 8)
+                }
+            }
+        }
+    }
+}
+
+struct RP2350MonitorUARTPanel: View {
+    @ObservedObject var vm: ToolkitViewModel
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            GroupBox("UART 设置") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        MonitorField("通道", text: $vm.rp2350MonitorUARTChannelID, width: 70)
+                        MonitorField("实例", text: $vm.rp2350MonitorUARTInstance, width: 70)
+                        MonitorField("TX", text: $vm.rp2350MonitorUARTTX, width: 70)
+                        MonitorField("RX", text: $vm.rp2350MonitorUARTRX, width: 70)
+                    }
+                    HStack(spacing: 8) {
+                        MonitorField("波特率", text: $vm.rp2350MonitorUARTBaud, width: 120)
+                        Toggle("Loopback", isOn: $vm.rp2350MonitorUARTLoopback)
+                            .font(.caption)
+                    }
+                    MonitorField("写入 HEX", text: $vm.rp2350MonitorUARTHex, width: 300)
+                    HStack(spacing: 8) {
+                        CompactMonitorButton("配置启动", systemImage: "slider.horizontal.3", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorConfigureUART() }
+                        CompactMonitorButton("写入", systemImage: "paperplane", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorUARTWrite() }
+                        CompactMonitorButton("停止", systemImage: "pause.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorStopOrReleaseChannel(channelIDText: vm.rp2350MonitorUARTChannelID, release: false) }
+                        CompactMonitorButton("释放", systemImage: "xmark.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorStopOrReleaseChannel(channelIDText: vm.rp2350MonitorUARTChannelID, release: true) }
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .frame(width: 430)
+
+            RP2350ProtocolEventPanel(title: "UART 事件", token: "\"proto\":\"uart\"", vm: vm)
+        }
+    }
+}
+
+struct RP2350MonitorSPIPanel: View {
+    @ObservedObject var vm: ToolkitViewModel
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            GroupBox("SPI 设置") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        MonitorField("通道", text: $vm.rp2350MonitorSPIChannelID, width: 70)
+                        MonitorField("实例", text: $vm.rp2350MonitorSPIInstance, width: 70)
+                        MonitorField("SCK", text: $vm.rp2350MonitorSPISCK, width: 70)
+                        MonitorField("MOSI", text: $vm.rp2350MonitorSPIMOSI, width: 70)
+                    }
+                    HStack(spacing: 8) {
+                        MonitorField("MISO", text: $vm.rp2350MonitorSPIMISO, width: 70)
+                        MonitorField("CS", text: $vm.rp2350MonitorSPICS, width: 70)
+                        MonitorField("频率", text: $vm.rp2350MonitorSPIBaud, width: 120)
+                    }
+                    HStack(spacing: 8) {
+                        MonitorField("传输 HEX", text: $vm.rp2350MonitorSPIHex, width: 210)
+                        MonitorField("读长度", text: $vm.rp2350MonitorSPIReadLength, width: 80)
+                    }
+                    HStack(spacing: 8) {
+                        CompactMonitorButton("配置启动", systemImage: "slider.horizontal.3", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorConfigureSPI() }
+                        CompactMonitorButton("传输", systemImage: "arrow.left.arrow.right", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorSPITransfer() }
+                        CompactMonitorButton("停止", systemImage: "pause.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorStopOrReleaseChannel(channelIDText: vm.rp2350MonitorSPIChannelID, release: false) }
+                        CompactMonitorButton("释放", systemImage: "xmark.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorStopOrReleaseChannel(channelIDText: vm.rp2350MonitorSPIChannelID, release: true) }
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .frame(width: 430)
+
+            RP2350ProtocolEventPanel(title: "SPI 事件", token: "\"proto\":\"spi\"", vm: vm)
+        }
+    }
+}
+
+struct RP2350MonitorI2CPanel: View {
+    @ObservedObject var vm: ToolkitViewModel
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            GroupBox("I2C 设置") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        MonitorField("通道", text: $vm.rp2350MonitorI2CChannelID, width: 70)
+                        MonitorField("实例", text: $vm.rp2350MonitorI2CInstance, width: 70)
+                        MonitorField("SDA", text: $vm.rp2350MonitorI2CSDA, width: 70)
+                        MonitorField("SCL", text: $vm.rp2350MonitorI2CSCL, width: 70)
+                    }
+                    HStack(spacing: 8) {
+                        MonitorField("频率", text: $vm.rp2350MonitorI2CBaud, width: 120)
+                        MonitorField("地址", text: $vm.rp2350MonitorI2CAddress, width: 90)
+                        MonitorField("读长度", text: $vm.rp2350MonitorI2CReadLength, width: 80)
+                    }
+                    MonitorField("写入 HEX", text: $vm.rp2350MonitorI2CWriteHex, width: 300)
+                    HStack(spacing: 8) {
+                        CompactMonitorButton("配置启动", systemImage: "slider.horizontal.3", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorConfigureI2C() }
+                        CompactMonitorButton("传输", systemImage: "arrow.left.arrow.right", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorI2CTransfer() }
+                        CompactMonitorButton("停止", systemImage: "pause.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorStopOrReleaseChannel(channelIDText: vm.rp2350MonitorI2CChannelID, release: false) }
+                        CompactMonitorButton("释放", systemImage: "xmark.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorStopOrReleaseChannel(channelIDText: vm.rp2350MonitorI2CChannelID, release: true) }
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .frame(width: 430)
+
+            RP2350ProtocolEventPanel(title: "I2C 事件", token: "\"proto\":\"i2c\"", vm: vm)
+        }
+    }
+}
+
+struct RP2350MonitorRawPanel: View {
+    @ObservedObject var vm: ToolkitViewModel
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            GroupBox("原始 JSONL 命令") {
+                VStack(alignment: .leading, spacing: 10) {
+                    TextEditor(text: $vm.rp2350MonitorRawCommand)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 170, maxHeight: 170)
+                        .scrollContentBackground(.hidden)
+                        .background(Color.toolkitInputBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    HStack(spacing: 8) {
+                        MonitorField("事件数", text: $vm.rp2350MonitorEventCount, width: 80)
+                        CompactMonitorButton("发送", systemImage: "paperplane", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorSendRawCommand() }
+                        CompactMonitorButton("读取事件", systemImage: "waveform.path", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorReadEvents() }
+                        CompactMonitorButton("刷新状态", systemImage: "arrow.clockwise", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorRefresh() }
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .frame(width: 430)
+
+            GroupBox("全部 JSONL 数据") {
+                SelectableDetailTextView(text: RP2350MonitorLogFormatter.text(from: vm.rp2350Monitor.recentLines, empty: "等待 JSONL 数据。"))
+                    .frame(minHeight: 500, maxHeight: .infinity)
+                    .padding(.top, 8)
+            }
+        }
+    }
+}
+
+struct RP2350ProtocolEventPanel: View {
+    let title: String
+    let token: String
+    @ObservedObject var vm: ToolkitViewModel
+
+    var body: some View {
+        GroupBox(title) {
+            SelectableDetailTextView(text: RP2350MonitorLogFormatter.filteredText(
+                from: vm.rp2350Monitor.recentLines,
+                token: token,
+                empty: "等待\(title)。"
+            ))
+            .frame(minHeight: 500, maxHeight: .infinity)
+            .padding(.top, 8)
+        }
+    }
+}
+
+struct MonitorField: View {
+    let title: String
+    @Binding var text: String
+    let width: CGFloat
+
+    init(_ title: String, text: Binding<String>, width: CGFloat) {
+        self.title = title
+        self._text = text
+        self.width = width
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            TextField(title, text: $text)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.caption, design: .monospaced))
+                .frame(width: width)
+        }
+    }
+}
+
+struct CompactMonitorButton: View {
+    let title: String
+    let systemImage: String
+    let enabled: Bool
+    let action: () -> Void
+
+    init(_ title: String, systemImage: String, enabled: Bool, action: @escaping () -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.enabled = enabled
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+        }
+        .buttonStyle(.bordered)
+        .disabled(!enabled)
+    }
+}
+
+struct RP2350LogicSample: Identifiable, Equatable {
+    let id = UUID()
+    let seq: Int
+    let level: Bool
+    let direction: String
+}
+
+struct RP2350LogicWaveform: View {
+    let samples: [RP2350LogicSample]
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.toolkitInputBackground)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        Divider()
+                            .opacity(0.35)
+                        Spacer(minLength: 0)
+                    }
+                }
+                .padding(.vertical, 16)
+                if samples.isEmpty {
+                    Text("启动 GPIO 输入采集后，点击读取事件显示高低电平变化。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    waveformPath(size: proxy.size)
+                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                    HStack {
+                        Text("LOW")
+                        Spacer()
+                        Text("HIGH")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+                }
+            }
+        }
+    }
+
+    private func waveformPath(size: CGSize) -> Path {
+        let inset: CGFloat = 18
+        let width = max(1, size.width - inset * 2)
+        let highY = inset + 18
+        let lowY = max(highY + 24, size.height - inset - 18)
+        let count = max(samples.count, 2)
+        let step = width / CGFloat(count - 1)
+        var path = Path()
+        for index in samples.indices {
+            let x = inset + CGFloat(index) * step
+            let y = samples[index].level ? highY : lowY
+            if index == samples.startIndex {
+                path.move(to: CGPoint(x: x, y: y))
+            } else {
+                let previousY = samples[index - 1].level ? highY : lowY
+                let previousX = inset + CGFloat(index - 1) * step
+                path.addLine(to: CGPoint(x: x, y: previousY))
+                path.addLine(to: CGPoint(x: x, y: y))
+                if index == samples.count - 1 {
+                    path.addLine(to: CGPoint(x: min(size.width - inset, previousX + step), y: y))
+                }
+            }
+        }
+        return path
+    }
+}
+
+enum RP2350MonitorLogFormatter {
+    static func text(from lines: [RP2350MonitorEventLine], empty: String) -> String {
+        guard !lines.isEmpty else {
+            return empty
+        }
+        return lines.map { "[\($0.kind)] \($0.text)" }.joined(separator: "\n")
+    }
+
+    static func filteredText(from lines: [RP2350MonitorEventLine], token: String, empty: String) -> String {
+        let filtered = lines.filter { $0.text.contains(token) }
+        return text(from: filtered, empty: empty)
+    }
+
+    static func gpioSamples(from lines: [RP2350MonitorEventLine], channelText: String) -> [RP2350LogicSample] {
+        let trimmed = channelText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let channel = Int(trimmed)
+        return lines.reversed().compactMap { entry in
+            guard entry.text.contains("\"proto\":\"gpio\""),
+                  let data = entry.text.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data, options: []),
+                  let doc = object as? [String: Any] else {
+                return nil
+            }
+            if let channel, (doc["channel"] as? NSNumber)?.intValue != channel {
+                return nil
+            }
+            let hex = (doc["hex"] as? String ?? "").lowercased()
+            guard hex == "00" || hex == "01" else {
+                return nil
+            }
+            let seq = (doc["seq"] as? NSNumber)?.intValue ?? 0
+            let direction = doc["dir"] as? String ?? "change"
+            return RP2350LogicSample(seq: seq, level: hex == "01", direction: direction)
+        }
     }
 }
 

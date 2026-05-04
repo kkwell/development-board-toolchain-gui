@@ -42,7 +42,6 @@ The overview page currently surfaces:
 - `连接方式`
 - `当前状态`
 - `串口设备`
-- `监控协议`
 
 ### Intended meaning
 
@@ -60,10 +59,6 @@ The overview page currently surfaces:
 - `串口设备`
   - only meaningful in runtime state
   - BOOTSEL state does not imply an application serial port
-- `监控协议`
-  - probes the current RP2350 runtime serial port with the RP2350-Monitor JSONL `hello` command
-  - shows `可用` only when the firmware returns `{"type":"resp","ok":true,"cmd":"hello"}`
-  - the `监控` tab remains hidden when the probe fails or when the board is not in runtime state
 
 ## Monitor Page
 
@@ -88,14 +83,29 @@ Visible data:
 - buffer health and dropped event counters from `status` / `buffer_status`
 - configured channels from `channels`
 - exposed GPIO ownership from `pins`
-- recent JSONL responses and replayed events from `events_read`
+- compact status and links into the expanded monitor window
 
 Controls:
 
 - `刷新状态`: runs `status`, `pins`, and `channels`
 - `读取事件`: runs `events_read`
-- GPIO quick control: `channel_config`, `channel_start`, `gpio_read`, `gpio_write`, and `channel_release`
-- raw JSONL command entry for UART, SPI, I2C, GPIO, Wi-Fi, and future protocol commands
+- `重新探测`: reruns `hello`
+- `详细监控`: opens a separate resizable monitor window
+
+The main monitor tab is intentionally compact. Detailed controls live in the separate monitor window so the connected dashboard does not become a dense scrolling workbench.
+
+### Monitor Detail Window
+
+The detail window uses segmented pages instead of one long scroll view:
+
+- `状态`: firmware, link, Wi-Fi, buffers, channels, pin ownership, recent JSONL
+- `GPIO 逻辑`: GPIO output controls plus an input-change view rendered like a small logic analyzer
+- `UART`: UART channel config, start, write, stop, release, event view
+- `SPI`: SPI channel config, transfer, stop, release, event view
+- `I2C`: I2C channel config, transfer, stop, release, event view
+- `JSONL`: raw protocol command entry and full recent JSONL log
+
+Each page is designed to fit the expanded window without an outer page scroll. Log text areas may scroll internally because they are data viewers.
 
 The GUI does not assume every RP2350 initial firmware has this monitor protocol. The page is feature-gated by live protocol detection.
 
@@ -151,7 +161,6 @@ Overview actions:
 - `进入 BOOTSEL`
 - `恢复运行态`
 - `读取日志`
-- `监控协议` card tap: re-run RP2350-Monitor protocol detection
 
 Firmware actions:
 
@@ -163,11 +172,16 @@ Monitor actions:
 - `刷新状态`
 - `读取事件`
 - `重新探测`
+- `详细监控`
 - `配置并启动` GPIO
+- `启动采集` GPIO input
 - `读电平`
 - `输出高`
 - `输出低`
 - `释放`
+- UART configure/write/stop/release
+- SPI configure/transfer/stop/release
+- I2C configure/transfer/stop/release
 - `发送命令`
 
 ## Enable / Disable Expectations
