@@ -1628,7 +1628,10 @@ final class ToolkitViewModel: ObservableObject {
     @Published var rp2350MonitorGPIOInitialLevel = false
     @Published var rp2350MonitorGPIOAnalyzerChannelID = "5"
     @Published var rp2350MonitorGPIOAnalyzerPin = "17"
+    @Published var rp2350MonitorGPIOAnalyzerPins = "17"
     @Published var rp2350MonitorGPIOAnalyzerPull = "up"
+    @Published var rp2350MonitorGPIOAnalyzerLive = false
+    @Published var rp2350MonitorGPIOAnalyzerActivePins: [Int: Int] = [:]
     @Published var rp2350MonitorUARTChannelID = "1"
     @Published var rp2350MonitorUARTInstance = "0"
     @Published var rp2350MonitorUARTTX = "0"
@@ -8374,27 +8377,46 @@ final class ToolkitViewModel: ObservableObject {
                 return
             }
             do {
-                let channelID = try parseMonitorInt(rp2350MonitorGPIOAnalyzerChannelID, label: "GPIO 输入通道 ID")
-                let gpio = try parseMonitorInt(rp2350MonitorGPIOAnalyzerPin, label: "GPIO 输入引脚")
+                let baseChannelID = try parseMonitorInt(rp2350MonitorGPIOAnalyzerChannelID, label: "GPIO 输入起始通道 ID")
+                let pins = try parseMonitorIntList(
+                    rp2350MonitorGPIOAnalyzerPins.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? rp2350MonitorGPIOAnalyzerPin
+                        : rp2350MonitorGPIOAnalyzerPins,
+                    label: "GPIO 输入引脚列表"
+                )
+                guard !pins.isEmpty else {
+                    throw ToolkitGUIError.commandFailed("GPIO 输入引脚列表不能为空。")
+                }
+                let channelPins = Dictionary(uniqueKeysWithValues: pins.enumerated().map { offset, gpio in
+                    (baseChannelID + offset, gpio)
+                })
+                rp2350MonitorGPIOAnalyzerActivePins = channelPins
+                rp2350MonitorGPIOAnalyzerPin = pins.map(String.init).joined(separator: ",")
+                rp2350MonitorGPIOAnalyzerPins = rp2350MonitorGPIOAnalyzerPin
+                rp2350MonitorGPIOAnalyzerLive = true
+                var commands: [[String: Any]] = []
+                for (offset, gpio) in pins.enumerated() {
+                    let channelID = baseChannelID + offset
+                    commands.append([
+                        "cmd": "channel_config",
+                        "id": channelID,
+                        "type": "gpio",
+                        "gpio": gpio,
+                        "direction": "input",
+                        "pull": rp2350MonitorGPIOAnalyzerPull,
+                    ])
+                    commands.append(["cmd": "channel_start", "id": channelID])
+                    commands.append(["cmd": "gpio_read", "id": channelID])
+                }
                 await rp2350MonitorRunCommandSequence(
                     title: "启动 GPIO 输入采集",
-                    commands: [
-                        [
-                            "cmd": "channel_config",
-                            "id": channelID,
-                            "type": "gpio",
-                            "gpio": gpio,
-                            "direction": "input",
-                            "pull": rp2350MonitorGPIOAnalyzerPull,
-                        ],
-                        ["cmd": "channel_start", "id": channelID],
-                        ["cmd": "gpio_read", "id": channelID],
-                    ],
+                    commands: commands,
                     device: device,
                     refreshAfter: true
                 )
             } catch {
                 let detail = error.localizedDescription
+                rp2350MonitorGPIOAnalyzerLive = false
                 presentInlineError(detail)
                 appendActivity(level: .warning, title: "RP2350-Monitor", message: "GPIO 输入配置无效", detail: detail)
             }
@@ -8408,11 +8430,12 @@ final class ToolkitViewModel: ObservableObject {
                 return
             }
             do {
-                let channelID = try parseMonitorInt(rp2350MonitorGPIOAnalyzerChannelID, label: "GPIO 输入通道 ID")
+                let channels = try rp2350MonitorGPIOAnalyzerChannelIDs()
                 let count = max(1, min(Int(rp2350MonitorEventCount.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 32, 64))
+                let commands = channels.map { ["cmd": "events_read", "channel": $0, "count": count] as [String: Any] }
                 await rp2350MonitorRunCommandSequence(
                     title: "读取 GPIO 采集事件",
-                    commands: [["cmd": "events_read", "channel": channelID, "count": count]],
+                    commands: commands,
                     device: device,
                     refreshAfter: false
                 )
@@ -8431,17 +8454,54 @@ final class ToolkitViewModel: ObservableObject {
                 return
             }
             do {
-                let channelID = try parseMonitorInt(rp2350MonitorGPIOAnalyzerChannelID, label: "GPIO 输入通道 ID")
+                let channels = try rp2350MonitorGPIOAnalyzerChannelIDs()
+                let commands = channels.map { ["cmd": "channel_release", "id": $0] as [String: Any] }
+                rp2350MonitorGPIOAnalyzerLive = false
                 await rp2350MonitorRunCommandSequence(
                     title: "释放 GPIO 输入通道",
-                    commands: [["cmd": "channel_release", "id": channelID]],
+                    commands: commands,
                     device: device,
                     refreshAfter: true
                 )
+                rp2350MonitorGPIOAnalyzerActivePins = [:]
             } catch {
                 let detail = error.localizedDescription
                 presentInlineError(detail)
                 appendActivity(level: .warning, title: "RP2350-Monitor", message: "GPIO 输入通道释放失败", detail: detail)
+            }
+        }
+    }
+
+    func rp2350MonitorPollGPIOAnalyzer() {
+        Task { @MainActor in
+            guard rp2350MonitorGPIOAnalyzerLive, !rp2350MonitorBusy else {
+                return
+            }
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350MonitorGPIOAnalyzerLive = false
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
+                return
+            }
+            do {
+                let channels = try rp2350MonitorGPIOAnalyzerChannelIDs()
+                let count = max(1, min(Int(rp2350MonitorEventCount.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 32, 64))
+                var commands: [[String: Any]] = []
+                for channel in channels {
+                    commands.append(["cmd": "gpio_read", "id": channel])
+                    commands.append(["cmd": "events_read", "channel": channel, "count": count])
+                }
+                await rp2350MonitorRunCommandSequence(
+                    title: "刷新 GPIO 输入",
+                    commands: commands,
+                    device: device,
+                    refreshAfter: false,
+                    logActivity: false
+                )
+            } catch {
+                rp2350MonitorGPIOAnalyzerLive = false
+                let detail = error.localizedDescription
+                rp2350Monitor.lastResponse = detail
+                rp2350Monitor.lastUpdated = Date()
             }
         }
     }
@@ -8668,18 +8728,19 @@ final class ToolkitViewModel: ObservableObject {
         title: String,
         commands: [[String: Any]],
         device: String,
-        refreshAfter: Bool
+        refreshAfter: Bool,
+        logActivity: Bool = true
     ) async {
         guard !rp2350MonitorBusy else {
             return
         }
         rp2350MonitorBusy = true
         defer { rp2350MonitorBusy = false }
+        var commandLines: [String] = []
         do {
             var statusResult: RP2350MonitorTransactionResult?
             var pinsResult: RP2350MonitorTransactionResult?
             var channelsResult: RP2350MonitorTransactionResult?
-            var commandLines: [String] = []
             for command in commands {
                 let commandName = command["cmd"] as? String
                 let timeout: TimeInterval = commandName == "wifi_connect" ? 18.0 : 3.0
@@ -8712,13 +8773,31 @@ final class ToolkitViewModel: ObservableObject {
                 extraLines: commandLines,
                 responseTitle: title
             )
-            appendActivity(level: .success, title: "RP2350-Monitor", message: "\(title)完成")
+            if logActivity {
+                appendActivity(level: .success, title: "RP2350-Monitor", message: "\(title)完成")
+            }
         } catch {
             let detail = error.localizedDescription
+            if refreshAfter,
+               let statusResult = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "status"], timeout: 2.5) {
+                let pinsResult = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "pins"], timeout: 2.5)
+                let channelsResult = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "channels"], timeout: 2.5)
+                applyRP2350MonitorResults(
+                    hello: nil,
+                    status: statusResult,
+                    pins: pinsResult,
+                    channels: channelsResult,
+                    extraLines: commandLines,
+                    responseTitle: "\(title)失败"
+                )
+            }
             rp2350Monitor.lastResponse = detail
             rp2350Monitor.lastUpdated = Date()
-            presentInlineError(detail)
-            appendActivity(level: .error, title: "RP2350-Monitor", message: "\(title)失败", detail: detail)
+            if logActivity {
+                let message = title.contains("Wi-Fi") ? "Wi-Fi 操作失败：\(detail)" : detail
+                presentInlineError(message)
+                appendActivity(level: .error, title: "RP2350-Monitor", message: "\(title)失败", detail: detail)
+            }
         }
     }
 
@@ -8748,6 +8827,60 @@ final class ToolkitViewModel: ObservableObject {
             return value
         }
         throw ToolkitGUIError.commandFailed("\(label)必须是十进制或 0x 十六进制整数。")
+    }
+
+    private func parseMonitorIntList(_ text: String, label: String) throws -> [Int] {
+        let separators = CharacterSet(charactersIn: ",，;； \n\t")
+        let parts = text
+            .components(separatedBy: separators)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !parts.isEmpty else {
+            throw ToolkitGUIError.commandFailed("\(label)不能为空。")
+        }
+        var values: [Int] = []
+        var seen: Set<Int> = []
+        for part in parts {
+            let value = try parseMonitorInt(part, label: label)
+            guard !seen.contains(value) else { continue }
+            seen.insert(value)
+            values.append(value)
+        }
+        return values
+    }
+
+    private func rp2350MonitorGPIOAnalyzerChannelIDs() throws -> [Int] {
+        let active = rp2350MonitorGPIOAnalyzerActivePins.keys.sorted()
+        if !active.isEmpty {
+            return active
+        }
+        let baseChannelID = try parseMonitorInt(rp2350MonitorGPIOAnalyzerChannelID, label: "GPIO 输入起始通道 ID")
+        let pins = try parseMonitorIntList(
+            rp2350MonitorGPIOAnalyzerPins.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? rp2350MonitorGPIOAnalyzerPin
+                : rp2350MonitorGPIOAnalyzerPins,
+            label: "GPIO 输入引脚列表"
+        )
+        return pins.indices.map { baseChannelID + $0 }
+    }
+
+    func rp2350MonitorGPIOAnalyzerDisplayChannels() -> [RP2350LogicChannel] {
+        if !rp2350MonitorGPIOAnalyzerActivePins.isEmpty {
+            return rp2350MonitorGPIOAnalyzerActivePins
+                .sorted { $0.key < $1.key }
+                .map { RP2350LogicChannel(channel: $0.key, gpio: $0.value) }
+        }
+        let baseChannel = Int(rp2350MonitorGPIOAnalyzerChannelID.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 5
+        let rawPins = rp2350MonitorGPIOAnalyzerPins.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? rp2350MonitorGPIOAnalyzerPin
+            : rp2350MonitorGPIOAnalyzerPins
+        let pins = (try? parseMonitorIntList(rawPins, label: "GPIO 输入引脚列表")) ?? []
+        if pins.isEmpty {
+            return [RP2350LogicChannel(channel: baseChannel, gpio: nil)]
+        }
+        return pins.indices.map { index in
+            RP2350LogicChannel(channel: baseChannel + index, gpio: pins[index])
+        }
     }
 
     private func applyRP2350MonitorResults(
@@ -10587,7 +10720,7 @@ struct OverviewTab: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             let checkHostState = vm.actionAvailabilityState(for: .checkHost)
             let ensureUSBNetState = vm.actionAvailabilityState(for: .ensureUSBNet)
             let authorizeKeyState = vm.actionAvailabilityState(for: .authorizeKey)
@@ -11156,7 +11289,7 @@ final class RP2350MonitorWindowPresenter {
         window.title = "\(board.displayName) 硬件监控"
         window.center()
         window.setContentSize(NSSize(width: 1120, height: 760))
-        window.minSize = NSSize(width: 980, height: 660)
+        window.minSize = NSSize(width: 1060, height: 740)
         window.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
         window.contentViewController = NSHostingController(rootView: rootView)
 
@@ -11243,7 +11376,7 @@ struct RP2350MonitorDetailWindowView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(16)
-        .frame(minWidth: 980, minHeight: 660)
+        .frame(minWidth: 1060, minHeight: 740)
         .background(Color.toolkitWindowBackground)
         .onAppear {
             if !vm.rp2350Monitor.tabAvailable {
@@ -11283,10 +11416,11 @@ struct RP2350MonitorStatusPanel: View {
                         .padding(.top, 8)
                 }
             }
+            .frame(height: 106)
 
             GroupBox("最近 JSONL") {
                 SelectableDetailTextView(text: RP2350MonitorLogFormatter.text(from: vm.rp2350Monitor.recentLines, empty: "等待 JSONL 数据。"))
-                    .frame(minHeight: 170, maxHeight: .infinity)
+                    .frame(height: 132)
                     .padding(.top, 8)
             }
         }
@@ -11332,8 +11466,8 @@ struct RP2350MonitorGPIOPanel: View {
                 GroupBox("GPIO 输入逻辑分析") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
-                            MonitorField("通道", text: $vm.rp2350MonitorGPIOAnalyzerChannelID, width: 70)
-                            MonitorField("GPIO", text: $vm.rp2350MonitorGPIOAnalyzerPin, width: 70)
+                            MonitorField("起始通道", text: $vm.rp2350MonitorGPIOAnalyzerChannelID, width: 78)
+                            MonitorField("GPIO 列表", text: $vm.rp2350MonitorGPIOAnalyzerPins, width: 130)
                             Picker("Pull", selection: $vm.rp2350MonitorGPIOAnalyzerPull) {
                                 Text("None").tag("none")
                                 Text("Up").tag("up")
@@ -11347,6 +11481,9 @@ struct RP2350MonitorGPIOPanel: View {
                             CompactMonitorButton("读取事件", systemImage: "waveform.path", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorReadGPIOAnalyzerEvents() }
                             CompactMonitorButton("释放输入", systemImage: "stop.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorReleaseGPIOAnalyzerChannel() }
                         }
+                        Text("GPIO 列表可填写多个输入管脚，例如 17,18,19；系统会从起始通道开始连续分配采集通道。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.top, 8)
                 }
@@ -11356,15 +11493,13 @@ struct RP2350MonitorGPIOPanel: View {
             VStack(alignment: .leading, spacing: 12) {
                 GroupBox("波形") {
                     VStack(alignment: .leading, spacing: 8) {
-                        let samples = RP2350MonitorLogFormatter.gpioSamples(
-                            from: vm.rp2350Monitor.recentLines,
-                            channelText: vm.rp2350MonitorGPIOAnalyzerChannelID
-                        )
-                        Text(RP2350MonitorLogFormatter.latestGPIOLevelText(samples: samples))
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(samples.last?.level == true ? Color.green : Color.secondary)
-                        RP2350LogicWaveform(samples: samples)
-                            .frame(height: 190)
+                        ForEach(vm.rp2350MonitorGPIOAnalyzerDisplayChannels()) { channel in
+                            let samples = RP2350MonitorLogFormatter.gpioSamples(
+                                from: vm.rp2350Monitor.recentLines,
+                                channel: channel.channel
+                            )
+                            RP2350LogicChannelWaveform(channel: channel, samples: samples)
+                        }
                     }
                     .padding(.top, 8)
                 }
@@ -11378,6 +11513,9 @@ struct RP2350MonitorGPIOPanel: View {
                     .padding(.top, 8)
                 }
             }
+        }
+        .onReceive(Timer.publish(every: 0.8, on: .main, in: .common).autoconnect()) { _ in
+            vm.rp2350MonitorPollGPIOAnalyzer()
         }
     }
 }
@@ -11712,8 +11850,42 @@ struct CompactMonitorButton: View {
 struct RP2350LogicSample: Identifiable, Equatable {
     let id = UUID()
     let seq: Int
+    let channel: Int
     let level: Bool
     let direction: String
+}
+
+struct RP2350LogicChannel: Identifiable, Equatable {
+    var id: Int { channel }
+    let channel: Int
+    let gpio: Int?
+
+    var title: String {
+        if let gpio {
+            return "CH \(channel) / GPIO \(gpio)"
+        }
+        return "CH \(channel)"
+    }
+}
+
+struct RP2350LogicChannelWaveform: View {
+    let channel: RP2350LogicChannel
+    let samples: [RP2350LogicSample]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(channel.title)
+                    .font(.caption.weight(.semibold))
+                Text(RP2350MonitorLogFormatter.latestGPIOLevelText(samples: samples))
+                    .font(.caption2)
+                    .foregroundStyle(samples.last?.level == true ? Color.green : Color.secondary)
+                Spacer(minLength: 0)
+            }
+            RP2350LogicWaveform(samples: samples)
+                .frame(height: 72)
+        }
+    }
 }
 
 struct RP2350LogicWaveform: View {
@@ -11793,9 +11965,7 @@ enum RP2350MonitorLogFormatter {
         return text(from: filtered, empty: empty)
     }
 
-    static func gpioSamples(from lines: [RP2350MonitorEventLine], channelText: String) -> [RP2350LogicSample] {
-        let trimmed = channelText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let channel = Int(trimmed)
+    static func gpioSamples(from lines: [RP2350MonitorEventLine], channel: Int?) -> [RP2350LogicSample] {
         return lines.reversed().compactMap { entry in
             guard entry.text.contains("\"proto\":\"gpio\""),
                   let data = entry.text.data(using: .utf8),
@@ -11803,7 +11973,8 @@ enum RP2350MonitorLogFormatter {
                   let doc = object as? [String: Any] else {
                 return nil
             }
-            if let channel, (doc["channel"] as? NSNumber)?.intValue != channel {
+            let sampleChannel = (doc["channel"] as? NSNumber)?.intValue ?? 0
+            if let channel, sampleChannel != channel {
                 return nil
             }
             let hex = (doc["hex"] as? String ?? "").lowercased()
@@ -11812,7 +11983,7 @@ enum RP2350MonitorLogFormatter {
             }
             let seq = (doc["seq"] as? NSNumber)?.intValue ?? 0
             let direction = doc["dir"] as? String ?? "change"
-            return RP2350LogicSample(seq: seq, level: hex == "01", direction: direction)
+            return RP2350LogicSample(seq: seq, channel: sampleChannel, level: hex == "01", direction: direction)
         }
     }
 

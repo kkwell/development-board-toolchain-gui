@@ -109,15 +109,17 @@ The main monitor tab is intentionally compact. Detailed controls live in the sep
 The detail window uses segmented pages instead of one long scroll view:
 
 - `状态`: firmware, link, Wi-Fi, buffers, channels, pin ownership, recent JSONL
-- `GPIO 逻辑`: GPIO output controls plus an input-change view rendered like a small logic analyzer; starting capture immediately performs `gpio_read` so the page shows the initial high/low level
+- `GPIO 逻辑`: GPIO output controls plus a multi-channel input view rendered like a small logic analyzer; users provide a start channel and comma-separated GPIO list, and the GUI assigns consecutive channels, polls each channel, and shows independent high/low traces
 - `UART`: UART channel config, start, write, stop, release, event view
 - `SPI`: SPI channel config, transfer, stop, release, event view
 - `I2C`: I2C channel config, transfer, stop, release, event view
 - `JSONL`: raw protocol command entry and full recent JSONL log
 
-Each page is designed to fit the expanded window without an outer page scroll. Log text areas may scroll internally because they are data viewers.
+Each page is designed to fit the expanded window without an outer page scroll. Log text areas may scroll internally because they are data viewers. The detail window minimum height is sized for the expanded `状态` page so the segmented header and bottom JSONL viewer remain visible.
 
 The GUI does not assume every RP2350 initial firmware has this monitor protocol. The page is feature-gated by live protocol detection.
+
+Wi-Fi connection failures refresh `status` after the failed command so profile `last_error` and AP recovery details are visible instead of only showing a generic command failure.
 
 ## Firmware Page
 
@@ -186,6 +188,7 @@ Monitor actions:
 - USB Wi-Fi provisioning: scan, save/connect, AP mode, clear profile
 - `配置并启动` GPIO
 - `启动采集` GPIO input
+- multi-channel GPIO input capture with live per-channel level traces
 - `读电平`
 - `输出高`
 - `输出低`
