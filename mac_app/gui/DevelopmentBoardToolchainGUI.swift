@@ -974,10 +974,32 @@ enum RP2350MonitorClient {
         payload: [String: Any],
         timeout: TimeInterval = 2.5
     ) async throws -> RP2350MonitorTransactionResult {
-        try await withCheckedThrowingContinuation { continuation in
+        if !device.hasPrefix("/dev/") {
+            let endpoint = try parseTCPEndpoint(device)
+            return try await transactTCP(host: endpoint.host, port: endpoint.port, payload: payload, timeout: timeout)
+        }
+        return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     let result = try transactSerialSync(device: device, payload: payload, timeout: timeout)
+                    continuation.resume(returning: result)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    static func transactTCP(
+        host: String,
+        port: Int,
+        payload: [String: Any],
+        timeout: TimeInterval = 2.5
+    ) async throws -> RP2350MonitorTransactionResult {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let result = try transactTCPSync(host: host, port: port, payload: payload, timeout: timeout)
                     continuation.resume(returning: result)
                 } catch {
                     continuation.resume(throwing: error)
@@ -999,7 +1021,62 @@ enum RP2350MonitorClient {
 
         try configureSerial(fd: fd)
         tcflush(fd, TCIOFLUSH)
+        return try transactOpenDescriptor(fd: fd, payload: payload, timeout: timeout)
+    }
 
+    private static func transactTCPSync(
+        host: String,
+        port: Int,
+        payload: [String: Any],
+        timeout: TimeInterval
+    ) throws -> RP2350MonitorTransactionResult {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            throw ToolkitGUIError.commandFailed("无法创建 Wi-Fi TCP 连接：errno \(errno)")
+        }
+        defer { close(fd) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = UInt16(port).bigEndian
+        guard inet_pton(AF_INET, host, &address.sin_addr) == 1 else {
+            throw ToolkitGUIError.commandFailed("Wi-Fi IP 地址无效：\(host)")
+        }
+
+        let flags = fcntl(fd, F_GETFL, 0)
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+
+        let connectResult = withUnsafePointer(to: &address) { pointer -> Int32 in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                connect(fd, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        if connectResult < 0 && errno != EINPROGRESS {
+            throw ToolkitGUIError.commandFailed("连接 RP2350-Monitor Wi-Fi \(host):\(port) 失败：errno \(errno)")
+        }
+        if connectResult < 0 {
+            var pollItem = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+            let pollResult = poll(&pollItem, 1, Int32(max(500, Int(timeout * 1000))))
+            guard pollResult > 0 else {
+                throw ToolkitGUIError.timeout("连接 RP2350-Monitor Wi-Fi \(host):\(port) 超时")
+            }
+            var socketError: Int32 = 0
+            var socketErrorLength = socklen_t(MemoryLayout<Int32>.size)
+            getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &socketErrorLength)
+            guard socketError == 0 else {
+                throw ToolkitGUIError.commandFailed("连接 RP2350-Monitor Wi-Fi \(host):\(port) 失败：errno \(socketError)")
+            }
+        }
+
+        return try transactOpenDescriptor(fd: fd, payload: payload, timeout: timeout)
+    }
+
+    private static func transactOpenDescriptor(
+        fd: Int32,
+        payload: [String: Any],
+        timeout: TimeInterval
+    ) throws -> RP2350MonitorTransactionResult {
         let commandName = payload["cmd"] as? String
         let data = try JSONSerialization.data(withJSONObject: payload, options: [])
         var commandData = data
@@ -1070,6 +1147,24 @@ enum RP2350MonitorClient {
         }
         throw ToolkitGUIError.timeout("RP2350-Monitor 命令等待响应超时")
     }
+
+    private static func parseTCPEndpoint(_ endpoint: String) throws -> (host: String, port: Int) {
+        let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ToolkitGUIError.commandFailed("Wi-Fi IP 地址不能为空。")
+        }
+        if let separator = trimmed.lastIndex(of: ":") {
+            let host = String(trimmed[..<separator])
+            let portText = String(trimmed[trimmed.index(after: separator)...])
+            guard let port = Int(portText), port > 0, port <= 65535 else {
+                throw ToolkitGUIError.commandFailed("Wi-Fi 端口无效：\(portText)")
+            }
+            return (host, port)
+        }
+        return (trimmed, DEFAULT_RPMON_TCP_PORT)
+    }
+
+    private static let DEFAULT_RPMON_TCP_PORT = 4242
 
     private static func configureSerial(fd: Int32) throws {
         var attrs = termios()
@@ -1426,6 +1521,9 @@ final class ToolkitViewModel: ObservableObject {
     @Published var rp2350LogLines = "6"
     @Published var rp2350Monitor = RP2350MonitorState()
     @Published var rp2350MonitorBusy = false
+    @Published var rp2350MonitorTransportMode = "usb"
+    @Published var rp2350MonitorTCPHost = "192.168.4.1"
+    @Published var rp2350MonitorTCPPort = "4242"
     @Published var rp2350MonitorGPIOChannelID = "4"
     @Published var rp2350MonitorGPIOPin = "16"
     @Published var rp2350MonitorGPIODirection = "output"
@@ -7788,6 +7886,15 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     private func rp2350MonitorSerialDevice() -> String? {
+        if rp2350MonitorTransportMode == "wifi" {
+            let host = rp2350MonitorTCPHost.trimmingCharacters(in: .whitespacesAndNewlines)
+            let port = rp2350MonitorTCPPort.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !host.isEmpty else {
+                return nil
+            }
+            return port.isEmpty ? host : "\(host):\(port)"
+        }
+
         let rpState = (status?.rp2350?.state ?? "").lowercased()
         if rpState.contains("runtime"),
            let device = status?.rp2350?.runtime_port?.device,
@@ -7812,13 +7919,20 @@ final class ToolkitViewModel: ObservableObject {
         return nil
     }
 
+    private func rp2350MonitorTransportUnavailableMessage() -> String {
+        if rp2350MonitorTransportMode == "wifi" {
+            return "Wi-Fi 控制通道未配置。请填写 RP2350-Monitor 的 IP 地址和端口。"
+        }
+        return "没有找到当前 Pico 的 USB CDC 运行态串口。请确认设备不是 BOOTSEL 状态。"
+    }
+
     private func scheduleRP2350MonitorProbeIfNeeded() {
         guard let device = rp2350MonitorSerialDevice() else {
             rp2350MonitorProbeTask?.cancel()
             rp2350MonitorLastProbeDevice = ""
             if rp2350Monitor.supported || rp2350Monitor.isProbing {
                 rp2350Monitor = RP2350MonitorState(
-                    availability: .unsupported("当前 Pico 未处于可访问运行态，无法打开 RP2350-Monitor 控制页。")
+                    availability: .unsupported(rp2350MonitorTransportUnavailableMessage())
                 )
             }
             return
@@ -7848,7 +7962,7 @@ final class ToolkitViewModel: ObservableObject {
             return
         }
         guard let device = rp2350MonitorSerialDevice() else {
-            rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。请确认设备不是 BOOTSEL 状态。")
+            rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
             return
         }
         rp2350MonitorBusy = true
@@ -7897,7 +8011,7 @@ final class ToolkitViewModel: ObservableObject {
 
     private func rp2350MonitorRunRefresh(forceProbe: Bool = false) async {
         guard let device = rp2350MonitorSerialDevice() else {
-            rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+            rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
             return
         }
         if !rp2350Monitor.supported || forceProbe {
@@ -7919,7 +8033,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorReadEvents() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             let count = max(1, min(Int(rp2350MonitorEventCount.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 32, 64))
@@ -7935,7 +8049,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorSendRawCommand() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             do {
@@ -7957,7 +8071,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorConfigureGPIO() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             guard let channelID = Int(rp2350MonitorGPIOChannelID.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -8002,7 +8116,7 @@ final class ToolkitViewModel: ObservableObject {
 
     private func rp2350MonitorGPIOAction(level: Bool?) async {
         guard let device = rp2350MonitorSerialDevice() else {
-            rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+            rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
             return
         }
         guard let channelID = Int(rp2350MonitorGPIOChannelID.trimmingCharacters(in: .whitespacesAndNewlines)) else {
@@ -8028,7 +8142,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorReleaseChannel() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             guard let channelID = Int(rp2350MonitorGPIOChannelID.trimmingCharacters(in: .whitespacesAndNewlines)) else {
@@ -8049,7 +8163,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorConfigureGPIOAnalyzer() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             do {
@@ -8067,6 +8181,7 @@ final class ToolkitViewModel: ObservableObject {
                             "pull": rp2350MonitorGPIOAnalyzerPull,
                         ],
                         ["cmd": "channel_start", "id": channelID],
+                        ["cmd": "gpio_read", "id": channelID],
                     ],
                     device: device,
                     refreshAfter: true
@@ -8082,7 +8197,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorReadGPIOAnalyzerEvents() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             do {
@@ -8105,7 +8220,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorReleaseGPIOAnalyzerChannel() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             do {
@@ -8127,7 +8242,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorConfigureUART() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             do {
@@ -8172,7 +8287,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorConfigureSPI() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             do {
@@ -8208,7 +8323,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorSPITransfer() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             do {
@@ -8239,7 +8354,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorConfigureI2C() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             do {
@@ -8270,7 +8385,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorI2CTransfer() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             do {
@@ -8298,7 +8413,7 @@ final class ToolkitViewModel: ObservableObject {
     func rp2350MonitorStopOrReleaseChannel(channelIDText: String, release: Bool) {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
-                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
                 return
             }
             do {
@@ -8324,7 +8439,7 @@ final class ToolkitViewModel: ObservableObject {
         hexText: String
     ) async {
         guard let device = rp2350MonitorSerialDevice() else {
-            rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口。")
+            rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
             return
         }
         do {
@@ -10584,6 +10699,11 @@ struct RP2350MonitorTab: View {
                 StatusCard(title: "缓冲队列", value: vm.rp2350Monitor.bufferSummary, ok: vm.rp2350Monitor.droppedEvents == 0, symbol: "tray.full")
             }
 
+            GroupBox("控制通道") {
+                RP2350MonitorTransportSelector(vm: vm, compact: true)
+                    .padding(.top, 8)
+            }
+
             HStack(alignment: .top, spacing: 12) {
                 GroupBox("监控状态") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -10612,15 +10732,9 @@ struct RP2350MonitorTab: View {
                 }
             }
 
-            HStack(alignment: .top, spacing: 12) {
-                GroupBox("当前通道") {
-                    RP2350MonitorChannelList(channels: vm.rp2350Monitor.channels)
-                        .padding(.top, 8)
-                }
-                GroupBox("引脚占用") {
-                    RP2350MonitorPinGrid(pins: vm.rp2350Monitor.pins)
-                        .padding(.top, 8)
-                }
+            GroupBox("当前通道") {
+                RP2350MonitorChannelList(channels: vm.rp2350Monitor.channels)
+                    .padding(.top, 8)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -10861,6 +10975,11 @@ struct RP2350MonitorStatusPanel: View {
                 StatusCard(title: "缓冲", value: vm.rp2350Monitor.bufferSummary, ok: vm.rp2350Monitor.droppedEvents == 0, symbol: "tray.full")
             }
 
+            GroupBox("控制通道") {
+                RP2350MonitorTransportSelector(vm: vm, compact: false)
+                    .padding(.top, 8)
+            }
+
             HStack(alignment: .top, spacing: 12) {
                 GroupBox("通道") {
                     RP2350MonitorChannelList(channels: vm.rp2350Monitor.channels)
@@ -10943,11 +11062,17 @@ struct RP2350MonitorGPIOPanel: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 GroupBox("波形") {
-                    RP2350LogicWaveform(samples: RP2350MonitorLogFormatter.gpioSamples(
-                        from: vm.rp2350Monitor.recentLines,
-                        channelText: vm.rp2350MonitorGPIOAnalyzerChannelID
-                    ))
-                    .frame(height: 210)
+                    VStack(alignment: .leading, spacing: 8) {
+                        let samples = RP2350MonitorLogFormatter.gpioSamples(
+                            from: vm.rp2350Monitor.recentLines,
+                            channelText: vm.rp2350MonitorGPIOAnalyzerChannelID
+                        )
+                        Text(RP2350MonitorLogFormatter.latestGPIOLevelText(samples: samples))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(samples.last?.level == true ? Color.green : Color.secondary)
+                        RP2350LogicWaveform(samples: samples)
+                            .frame(height: 190)
+                    }
                     .padding(.top, 8)
                 }
                 GroupBox("GPIO 事件") {
@@ -11123,6 +11248,41 @@ struct RP2350ProtocolEventPanel: View {
     }
 }
 
+struct RP2350MonitorTransportSelector: View {
+    @ObservedObject var vm: ToolkitViewModel
+    let compact: Bool
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Picker("通道", selection: $vm.rp2350MonitorTransportMode) {
+                Text("USB").tag("usb")
+                Text("Wi-Fi").tag("wifi")
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 150)
+
+            if vm.rp2350MonitorTransportMode == "wifi" {
+                MonitorField("IP 地址", text: $vm.rp2350MonitorTCPHost, width: compact ? 140 : 170)
+                MonitorField("端口", text: $vm.rp2350MonitorTCPPort, width: 72)
+                Text("Wi-Fi 与 USB 可共存；使用 Wi-Fi 前先填入设备 IP。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(compact ? 1 : 2)
+            } else {
+                Text(vm.rp2350Monitor.serialDevice.isEmpty ? "当前使用 USB CDC 串口控制。" : vm.rp2350Monitor.serialDevice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
+            CompactMonitorButton("应用检测", systemImage: "checkmark.circle", enabled: !vm.rp2350MonitorBusy) {
+                vm.rp2350MonitorProbe()
+            }
+        }
+    }
+}
+
 struct MonitorField: View {
     let title: String
     @Binding var text: String
@@ -11278,6 +11438,13 @@ enum RP2350MonitorLogFormatter {
             let direction = doc["dir"] as? String ?? "change"
             return RP2350LogicSample(seq: seq, level: hex == "01", direction: direction)
         }
+    }
+
+    static func latestGPIOLevelText(samples: [RP2350LogicSample]) -> String {
+        guard let sample = samples.last else {
+            return "当前电平：未采样"
+        }
+        return "当前电平：\(sample.level ? "高电平" : "低电平")  seq=\(sample.seq)  dir=\(sample.direction)"
     }
 }
 

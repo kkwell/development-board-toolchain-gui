@@ -73,7 +73,9 @@ Visible only when:
 Transport:
 
 - USB CDC newline-delimited JSON
-- 115200 baud host-side serial setup
+- Wi-Fi TCP newline-delimited JSON on the user-provided IP and port, normally port `4242`
+- USB and Wi-Fi can coexist; the GUI lets the user choose the active control channel
+- 115200 baud host-side serial setup when USB is selected
 - commands are serialized by the GUI to avoid corrupting the shared JSONL stream
 
 Visible data:
@@ -82,8 +84,7 @@ Visible data:
 - Wi-Fi/AP/station state from `status`
 - buffer health and dropped event counters from `status` / `buffer_status`
 - configured channels from `channels`
-- exposed GPIO ownership from `pins`
-- compact status and links into the expanded monitor window
+- compact status and control-channel selection
 
 Controls:
 
@@ -99,7 +100,7 @@ The main monitor tab is intentionally compact. Detailed controls live in the sep
 The detail window uses segmented pages instead of one long scroll view:
 
 - `状态`: firmware, link, Wi-Fi, buffers, channels, pin ownership, recent JSONL
-- `GPIO 逻辑`: GPIO output controls plus an input-change view rendered like a small logic analyzer
+- `GPIO 逻辑`: GPIO output controls plus an input-change view rendered like a small logic analyzer; starting capture immediately performs `gpio_read` so the page shows the initial high/low level
 - `UART`: UART channel config, start, write, stop, release, event view
 - `SPI`: SPI channel config, transfer, stop, release, event view
 - `I2C`: I2C channel config, transfer, stop, release, event view
