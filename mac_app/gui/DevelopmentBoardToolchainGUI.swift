@@ -896,6 +896,34 @@ struct RP2350MonitorEventLine: Identifiable, Equatable {
     let text: String
 }
 
+struct RP2350MonitorWiFiProfile: Identifiable, Equatable {
+    var id: Int { slot }
+    let slot: Int
+    let valid: Bool
+    let active: Bool
+    let ssid: String
+    let lastError: String
+
+    var label: String {
+        let base = valid ? "slot \(slot): \(ssid)" : "slot \(slot): 未配置"
+        let activeSuffix = active ? " / 当前" : ""
+        let errorSuffix = lastError.isEmpty ? "" : " / \(lastError)"
+        return base + activeSuffix + errorSuffix
+    }
+}
+
+struct RP2350MonitorWiFiScanResult: Identifiable, Equatable {
+    var id: String { "\(ssid)-\(channel)-\(rssi)" }
+    let ssid: String
+    let rssi: Int
+    let channel: Int
+    let auth: Int
+
+    var label: String {
+        "\(ssid) / RSSI \(rssi) / CH \(channel)"
+    }
+}
+
 struct RP2350MonitorState {
     enum Availability: Equatable {
         case unknown
@@ -910,6 +938,19 @@ struct RP2350MonitorState {
     var firmwareBoard = "-"
     var links: [String] = []
     var wifiSummary = "-"
+    var wifiConfigured = false
+    var wifiSSID = ""
+    var wifiStationStatus = "unknown"
+    var wifiStationIP = "0.0.0.0"
+    var wifiAPActive = false
+    var wifiAPSSID = ""
+    var wifiAPIP = "192.168.4.1"
+    var wifiTCPPort = "4242"
+    var wifiActiveProfile = 0
+    var wifiLastError = ""
+    var wifiProfiles: [RP2350MonitorWiFiProfile] = []
+    var wifiScanActive = false
+    var wifiScanResults: [RP2350MonitorWiFiScanResult] = []
     var bufferSummary = "-"
     var eventDepth = 0
     var droppedEvents = 0
@@ -929,6 +970,52 @@ struct RP2350MonitorState {
 
     var tabAvailable: Bool {
         supported || firmwareVersion != "-" || firmwareBoard != "-" || !links.isEmpty
+    }
+
+    var wifiStationOnline: Bool {
+        wifiStationStatus.lowercased() == "up" && wifiStationIP != "0.0.0.0" && !wifiStationIP.isEmpty
+    }
+
+    var wifiServiceEndpoint: String {
+        guard wifiStationOnline else { return "-" }
+        return "\(wifiStationIP):\(wifiTCPPort)"
+    }
+
+    var wifiDetail: String {
+        if wifiStationOnline {
+            let ssid = wifiSSID.isEmpty ? "当前 Wi-Fi" : wifiSSID
+            return "已连接 \(ssid)，控制服务地址 \(wifiServiceEndpoint)。该地址会自动填入 Wi-Fi 服务参数。"
+        }
+        if !wifiConfigured {
+            if wifiAPActive {
+                let ssid = wifiAPSSID.isEmpty ? "RP2350-Monitor" : wifiAPSSID
+                return "Wi-Fi 未配置。可连接 AP \(ssid)（\(wifiAPIP)，HTTP 80 / TCP \(wifiTCPPort)）进入配置页，也可在下方通过 USB 写入 SSID/密码。"
+            }
+            return "Wi-Fi 未配置。请通过 USB 写入 SSID/密码，或开启 AP 后连接配置。"
+        }
+        let ssid = wifiSSID.isEmpty ? "已保存配置" : wifiSSID
+        var detail = "\(ssid) 已配置，当前未连上路由器（状态：\(wifiStationStatus)）。"
+        if !wifiLastError.isEmpty {
+            detail += " 最近错误：\(wifiLastError)。"
+        }
+        if wifiAPActive {
+            let ap = wifiAPSSID.isEmpty ? "RP2350-Monitor" : wifiAPSSID
+            detail += " 可连接 AP \(ap)（\(wifiAPIP)）恢复配置，或通过 USB 重新连接。"
+        }
+        return detail
+    }
+
+    var wifiProfilesSummary: String {
+        let labels = wifiProfiles.map(\.label)
+        return labels.isEmpty ? "暂无 Wi-Fi 配置槽信息。" : labels.joined(separator: "；")
+    }
+
+    var wifiScanSummary: String {
+        if wifiScanActive {
+            return "正在扫描 2.4GHz Wi-Fi..."
+        }
+        let labels = wifiScanResults.prefix(4).map(\.label)
+        return labels.isEmpty ? "暂无扫描结果。" : labels.joined(separator: "；")
     }
 
     var isProbing: Bool {
@@ -1529,8 +1616,11 @@ final class ToolkitViewModel: ObservableObject {
     @Published var rp2350Monitor = RP2350MonitorState()
     @Published var rp2350MonitorBusy = false
     @Published var rp2350MonitorTransportMode = "usb"
-    @Published var rp2350MonitorTCPHost = "192.168.4.1"
+    @Published var rp2350MonitorTCPHost = ""
     @Published var rp2350MonitorTCPPort = "4242"
+    @Published var rp2350MonitorWiFiSlot = "0"
+    @Published var rp2350MonitorWiFiSSID = ""
+    @Published var rp2350MonitorWiFiPassword = ""
     @Published var rp2350MonitorGPIOChannelID = "4"
     @Published var rp2350MonitorGPIOPin = "16"
     @Published var rp2350MonitorGPIODirection = "output"
@@ -7902,6 +7992,10 @@ final class ToolkitViewModel: ObservableObject {
             return port.isEmpty ? host : "\(host):\(port)"
         }
 
+        return rp2350MonitorUSBSerialDevice()
+    }
+
+    private func rp2350MonitorUSBSerialDevice() -> String? {
         let rpState = (status?.rp2350?.state ?? "").lowercased()
         if rpState.contains("runtime"),
            let device = status?.rp2350?.runtime_port?.device,
@@ -8063,6 +8157,99 @@ final class ToolkitViewModel: ObservableObject {
                 device: device,
                 refreshAfter: false
             )
+        }
+    }
+
+    func rp2350MonitorWiFiScanViaUSB() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorUSBSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口，无法通过 USB 扫描 Wi-Fi。")
+                return
+            }
+            await rp2350MonitorRunCommandSequence(
+                title: "扫描 Wi-Fi",
+                commands: [["cmd": "wifi_scan"]],
+                device: device,
+                refreshAfter: true
+            )
+        }
+    }
+
+    func rp2350MonitorWiFiSaveAndConnectViaUSB() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorUSBSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口，无法通过 USB 配置 Wi-Fi。")
+                return
+            }
+            do {
+                let slot = try parseMonitorInt(rp2350MonitorWiFiSlot, label: "Wi-Fi 槽位")
+                guard (0...2).contains(slot) else {
+                    throw ToolkitGUIError.commandFailed("Wi-Fi 槽位只能是 0、1 或 2。")
+                }
+                let ssid = rp2350MonitorWiFiSSID.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !ssid.isEmpty else {
+                    throw ToolkitGUIError.commandFailed("Wi-Fi SSID 不能为空。")
+                }
+                await rp2350MonitorRunCommandSequence(
+                    title: "保存并连接 Wi-Fi",
+                    commands: [
+                        [
+                            "cmd": "wifi_set",
+                            "slot": slot,
+                            "ssid": ssid,
+                            "password": rp2350MonitorWiFiPassword,
+                            "save": true,
+                        ],
+                        ["cmd": "wifi_connect", "slot": slot],
+                    ],
+                    device: device,
+                    refreshAfter: true
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .warning, title: "RP2350-Monitor", message: "Wi-Fi 配置参数无效", detail: detail)
+            }
+        }
+    }
+
+    func rp2350MonitorWiFiStartAPViaUSB() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorUSBSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口，无法通过 USB 开启 AP。")
+                return
+            }
+            await rp2350MonitorRunCommandSequence(
+                title: "开启 Wi-Fi AP",
+                commands: [["cmd": "wifi_ap"]],
+                device: device,
+                refreshAfter: true
+            )
+        }
+    }
+
+    func rp2350MonitorWiFiClearViaUSB() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorUSBSerialDevice() else {
+                rp2350Monitor.availability = .unsupported("没有找到当前 Pico 的 USB CDC 运行态串口，无法通过 USB 清除 Wi-Fi 配置。")
+                return
+            }
+            do {
+                let slot = try parseMonitorInt(rp2350MonitorWiFiSlot, label: "Wi-Fi 槽位")
+                guard (0...2).contains(slot) else {
+                    throw ToolkitGUIError.commandFailed("Wi-Fi 槽位只能是 0、1 或 2。")
+                }
+                await rp2350MonitorRunCommandSequence(
+                    title: "清除 Wi-Fi 配置",
+                    commands: [["cmd": "wifi_clear", "slot": slot]],
+                    device: device,
+                    refreshAfter: true
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .warning, title: "RP2350-Monitor", message: "Wi-Fi 槽位无效", detail: detail)
+            }
         }
     }
 
@@ -8494,7 +8681,9 @@ final class ToolkitViewModel: ObservableObject {
             var channelsResult: RP2350MonitorTransactionResult?
             var commandLines: [String] = []
             for command in commands {
-                let result = try await RP2350MonitorClient.transactSerial(device: device, payload: command, timeout: 3.0)
+                let commandName = command["cmd"] as? String
+                let timeout: TimeInterval = commandName == "wifi_connect" ? 18.0 : 3.0
+                let result = try await RP2350MonitorClient.transactSerial(device: device, payload: command, timeout: timeout)
                 commandLines.append(contentsOf: result.lines)
                 guard result.response?["ok"] as? Bool != false else {
                     throw ToolkitGUIError.commandFailed(result.response?["msg"] as? String ?? "\(command["cmd"] ?? "command") 执行失败")
@@ -8582,7 +8771,7 @@ final class ToolkitViewModel: ObservableObject {
 
         if let statusResponse = status?.response {
             if let wifi = dictionary(statusResponse["wifi"]) {
-                next.wifiSummary = rp2350MonitorWifiSummary(from: wifi)
+                applyRP2350MonitorWiFi(wifi, to: &next)
             }
             if let buffers = dictionary(statusResponse["buffers"]) {
                 applyRP2350MonitorBuffers(buffers, to: &next)
@@ -8612,21 +8801,105 @@ final class ToolkitViewModel: ObservableObject {
         }
         next.recentLines = Array((newEntries + next.recentLines).prefix(80))
         next.lastResponse = responseTitle
+        syncRP2350MonitorWiFiDefaults(from: next)
         rp2350Monitor = next
     }
 
-    private func rp2350MonitorWifiSummary(from wifi: [String: Any]) -> String {
+    private func applyRP2350MonitorWiFi(_ wifi: [String: Any], to state: inout RP2350MonitorState) {
         let stationStatus = stringValue(wifi["station_status"]) ?? "unknown"
         let stationIP = stringValue(wifi["station_ip"]) ?? "0.0.0.0"
-        if stationStatus == "up", stationIP != "0.0.0.0" {
-            return "STA \(stationIP)"
+        let configured = boolValue(wifi["ssid_configured"]) ?? false
+        let ssid = stringValue(wifi["ssid"]) ?? ""
+        let apActive = boolValue(wifi["ap_active"]) ?? false
+        let apSSID = stringValue(wifi["ap_ssid"]) ?? ""
+        let apIP = stringValue(wifi["ap_ip"]) ?? "192.168.4.1"
+        let activeProfile = intValue(wifi["active_profile"]) ?? 0
+
+        let profiles = arrayOfDictionaries(wifi["profiles"]).compactMap { item -> RP2350MonitorWiFiProfile? in
+            guard let slot = intValue(item["slot"]) else { return nil }
+            return RP2350MonitorWiFiProfile(
+                slot: slot,
+                valid: boolValue(item["valid"]) ?? false,
+                active: boolValue(item["active"]) ?? false,
+                ssid: stringValue(item["ssid"]) ?? "",
+                lastError: stringValue(item["last_error"]) ?? ""
+            )
         }
-        if boolValue(wifi["ap_active"]) == true {
-            let ssid = stringValue(wifi["ap_ssid"]) ?? "RP2350-Monitor"
-            let ip = stringValue(wifi["ap_ip"]) ?? "192.168.4.1"
-            return "AP \(ssid) / \(ip)"
+        let scan = dictionary(wifi["scan"])
+        let scanResults = arrayOfDictionaries(scan?["results"]).compactMap { item -> RP2350MonitorWiFiScanResult? in
+            guard let ssid = stringValue(item["ssid"]), !ssid.isEmpty else { return nil }
+            return RP2350MonitorWiFiScanResult(
+                ssid: ssid,
+                rssi: intValue(item["rssi"]) ?? 0,
+                channel: intValue(item["channel"]) ?? 0,
+                auth: intValue(item["auth"]) ?? 0
+            )
         }
-        return "Wi-Fi \(stationStatus)"
+
+        let lastError = profiles.first(where: { $0.active })?.lastError
+            ?? profiles.first(where: { !$0.lastError.isEmpty })?.lastError
+            ?? ""
+
+        state.wifiConfigured = configured
+        state.wifiSSID = ssid
+        state.wifiStationStatus = stationStatus
+        state.wifiStationIP = stationIP
+        state.wifiAPActive = apActive
+        state.wifiAPSSID = apSSID
+        state.wifiAPIP = apIP
+        state.wifiTCPPort = "4242"
+        state.wifiActiveProfile = activeProfile
+        state.wifiLastError = lastError
+        state.wifiProfiles = profiles
+        state.wifiScanActive = boolValue(scan?["active"]) ?? false
+        state.wifiScanResults = scanResults
+
+        if state.wifiStationOnline {
+            let label = ssid.isEmpty ? stationIP : "\(ssid) / \(stationIP)"
+            state.wifiSummary = "\(label):\(state.wifiTCPPort)"
+        } else if !configured {
+            state.wifiSummary = "Wi-Fi 未配置"
+        } else if apActive {
+            let label = ssid.isEmpty ? "已配置" : ssid
+            let ap = apSSID.isEmpty ? apIP : "\(apSSID) / \(apIP)"
+            state.wifiSummary = "\(label) 未连接，AP \(ap)"
+        } else {
+            let label = ssid.isEmpty ? "Wi-Fi" : ssid
+            state.wifiSummary = "\(label) \(stationStatus)"
+        }
+    }
+
+    private func syncRP2350MonitorWiFiDefaults(from state: RP2350MonitorState) {
+        if rp2350MonitorWiFiSSID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !state.wifiSSID.isEmpty {
+            rp2350MonitorWiFiSSID = state.wifiSSID
+        }
+        if rp2350MonitorWiFiSlot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rp2350MonitorWiFiSlot = "\(state.wifiActiveProfile)"
+        }
+        if state.wifiStationOnline {
+            let currentHost = rp2350MonitorTCPHost.trimmingCharacters(in: .whitespacesAndNewlines)
+            let shouldFillHost = rp2350MonitorTransportMode == "usb" ||
+                currentHost.isEmpty ||
+                currentHost == "192.168.4.1" ||
+                currentHost == state.wifiAPIP ||
+                currentHost == rp2350Monitor.wifiStationIP
+            if shouldFillHost {
+                rp2350MonitorTCPHost = state.wifiStationIP
+            }
+            if rp2350MonitorTCPPort.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                rp2350MonitorTCPPort == "4242" {
+                rp2350MonitorTCPPort = state.wifiTCPPort
+            }
+        } else if !state.wifiConfigured, state.wifiAPActive {
+            let currentHost = rp2350MonitorTCPHost.trimmingCharacters(in: .whitespacesAndNewlines)
+            if currentHost.isEmpty {
+                rp2350MonitorTCPHost = state.wifiAPIP
+            }
+            if rp2350MonitorTCPPort.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                rp2350MonitorTCPPort = state.wifiTCPPort
+            }
+        }
     }
 
     private func applyRP2350MonitorBuffers(_ buffers: [String: Any], to state: inout RP2350MonitorState) {
@@ -10715,7 +10988,7 @@ struct RP2350MonitorTab: View {
             LazyVGrid(columns: statusColumns, spacing: 6) {
                 StatusCard(title: "固件版本", value: vm.rp2350Monitor.firmwareVersion, ok: vm.rp2350Monitor.supported, symbol: "cpu")
                 StatusCard(title: "控制链路", value: vm.rp2350Monitor.serialDevice.isEmpty ? "USB CDC" : vm.rp2350Monitor.serialDevice, ok: vm.rp2350Monitor.supported, symbol: "cable.connector")
-                StatusCard(title: "Wi-Fi", value: vm.rp2350Monitor.wifiSummary, ok: vm.rp2350Monitor.supported, symbol: "wifi")
+                StatusCard(title: "Wi-Fi", value: vm.rp2350Monitor.wifiSummary, ok: vm.rp2350Monitor.wifiStationOnline, symbol: "wifi")
                 StatusCard(title: "缓冲队列", value: vm.rp2350Monitor.bufferSummary, ok: vm.rp2350Monitor.droppedEvents == 0, symbol: "tray.full")
             }
 
@@ -10991,7 +11264,7 @@ struct RP2350MonitorStatusPanel: View {
             LazyVGrid(columns: columns, spacing: 8) {
                 StatusCard(title: "固件", value: vm.rp2350Monitor.firmwareVersion, ok: vm.rp2350Monitor.supported, symbol: "cpu")
                 StatusCard(title: "串口", value: vm.rp2350Monitor.serialDevice.isEmpty ? "USB CDC" : vm.rp2350Monitor.serialDevice, ok: vm.rp2350Monitor.supported, symbol: "terminal")
-                StatusCard(title: "Wi-Fi", value: vm.rp2350Monitor.wifiSummary, ok: vm.rp2350Monitor.supported, symbol: "wifi")
+                StatusCard(title: "Wi-Fi", value: vm.rp2350Monitor.wifiSummary, ok: vm.rp2350Monitor.wifiStationOnline, symbol: "wifi")
                 StatusCard(title: "缓冲", value: vm.rp2350Monitor.bufferSummary, ok: vm.rp2350Monitor.droppedEvents == 0, symbol: "tray.full")
             }
 
@@ -11273,31 +11546,90 @@ struct RP2350MonitorTransportSelector: View {
     let compact: Bool
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Picker("通道", selection: $vm.rp2350MonitorTransportMode) {
-                Text("USB").tag("usb")
-                Text("Wi-Fi").tag("wifi")
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 150)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                Picker("通道", selection: $vm.rp2350MonitorTransportMode) {
+                    Text("USB").tag("usb")
+                    Text("Wi-Fi").tag("wifi")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 150)
 
-            if vm.rp2350MonitorTransportMode == "wifi" {
-                MonitorField("IP 地址", text: $vm.rp2350MonitorTCPHost, width: compact ? 140 : 170)
-                MonitorField("端口", text: $vm.rp2350MonitorTCPPort, width: 72)
-                Text("Wi-Fi 与 USB 可共存；使用 Wi-Fi 前先填入设备 IP。")
+                if vm.rp2350MonitorTransportMode == "wifi" {
+                    MonitorField("服务 IP", text: $vm.rp2350MonitorTCPHost, width: compact ? 140 : 170)
+                    MonitorField("端口", text: $vm.rp2350MonitorTCPPort, width: 72)
+                    Text("Wi-Fi 与 USB 可共存；已连接时会自动填入开发板 Station 地址。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(compact ? 1 : 2)
+                } else {
+                    Text(vm.rp2350Monitor.serialDevice.isEmpty ? "当前使用 USB CDC 串口控制。" : vm.rp2350Monitor.serialDevice)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 0)
+                CompactMonitorButton("应用检测", systemImage: "checkmark.circle", enabled: !vm.rp2350MonitorBusy) {
+                    vm.rp2350MonitorProbe()
+                }
+            }
+
+            Text(vm.rp2350Monitor.wifiDetail)
+                .font(.caption)
+                .foregroundStyle(vm.rp2350Monitor.wifiStationOnline ? Color.green : Color.secondary)
+                .lineLimit(compact ? 2 : 3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !compact {
+                RP2350MonitorWiFiUSBConfigPanel(vm: vm)
+            }
+        }
+    }
+}
+
+struct RP2350MonitorWiFiUSBConfigPanel: View {
+    @ObservedObject var vm: ToolkitViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            HStack(spacing: 8) {
+                Label("USB Wi-Fi 配置", systemImage: "antenna.radiowaves.left.and.right")
+                    .font(.caption.weight(.semibold))
+                Text("通过当前 USB CDC 控制通道写入 2.4GHz Wi-Fi 参数。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(compact ? 1 : 2)
-            } else {
-                Text(vm.rp2350Monitor.serialDevice.isEmpty ? "当前使用 USB CDC 串口控制。" : vm.rp2350Monitor.serialDevice)
+                Spacer(minLength: 0)
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                MonitorField("SSID", text: $vm.rp2350MonitorWiFiSSID, width: 190)
+                MonitorSecureField("密码", text: $vm.rp2350MonitorWiFiPassword, width: 150)
+                MonitorField("槽位", text: $vm.rp2350MonitorWiFiSlot, width: 48)
+                CompactMonitorButton("扫描", systemImage: "dot.radiowaves.left.and.right", enabled: !vm.rp2350MonitorBusy) {
+                    vm.rp2350MonitorWiFiScanViaUSB()
+                }
+                CompactMonitorButton("保存并连接", systemImage: "checkmark.circle", enabled: !vm.rp2350MonitorBusy) {
+                    vm.rp2350MonitorWiFiSaveAndConnectViaUSB()
+                }
+                CompactMonitorButton("开启 AP", systemImage: "wifi.router", enabled: !vm.rp2350MonitorBusy) {
+                    vm.rp2350MonitorWiFiStartAPViaUSB()
+                }
+                CompactMonitorButton("清除", systemImage: "trash", enabled: !vm.rp2350MonitorBusy) {
+                    vm.rp2350MonitorWiFiClearViaUSB()
+                }
+            }
+            HStack(spacing: 16) {
+                Text(vm.rp2350Monitor.wifiProfilesSummary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-            }
-            Spacer(minLength: 0)
-            CompactMonitorButton("应用检测", systemImage: "checkmark.circle", enabled: !vm.rp2350MonitorBusy) {
-                vm.rp2350MonitorProbe()
+                Text(vm.rp2350Monitor.wifiScanSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
     }
@@ -11322,6 +11654,30 @@ struct MonitorField: View {
             TextField(title, text: $text)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.caption, design: .monospaced))
+                .frame(width: width)
+        }
+    }
+}
+
+struct MonitorSecureField: View {
+    let title: String
+    @Binding var text: String
+    let width: CGFloat
+
+    init(_ title: String, text: Binding<String>, width: CGFloat) {
+        self.title = title
+        self._text = text
+        self.width = width
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            SecureField(title, text: $text)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.caption, design: .rounded))
                 .frame(width: width)
         }
     }

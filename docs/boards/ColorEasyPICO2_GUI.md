@@ -80,6 +80,13 @@ Transport:
 - 115200 baud host-side serial setup when USB is selected
 - commands are serialized by the GUI to avoid corrupting the shared JSONL stream
 
+Wi-Fi status rules:
+
+- `station_status=up` with a non-zero `station_ip` means the board is connected to the user's Wi-Fi. The GUI shows `<station_ip>:4242` and fills the Wi-Fi service IP/port fields with that endpoint.
+- `ssid_configured=false` means Wi-Fi is not configured. The GUI must say `Wi-Fi 未配置` and show the setup AP SSID/IP for browser-based configuration, plus the USB fields for SSID/password provisioning.
+- `ssid_configured=true` but `station_ip=0.0.0.0` means credentials exist but the board is not connected. The GUI must not present the setup AP address as the connected station address.
+- The setup AP address `192.168.4.1` is a recovery/configuration address, not proof that the board has joined the user's router.
+
 Visible data:
 
 - firmware version and board ID from `hello`
@@ -176,6 +183,7 @@ Monitor actions:
 - `读取事件`
 - `重新探测`
 - `详细监控`
+- USB Wi-Fi provisioning: scan, save/connect, AP mode, clear profile
 - `配置并启动` GPIO
 - `启动采集` GPIO input
 - `读电平`
