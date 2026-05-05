@@ -110,6 +110,7 @@ The detail window uses segmented pages instead of one long scroll view:
 
 - `状态`: firmware, link, Wi-Fi, buffers, channels, pin ownership, recent JSONL
 - `GPIO 逻辑`: GPIO output controls plus a multi-channel input view rendered like a small logic analyzer; users provide a start channel and comma-separated GPIO list, and the GUI assigns consecutive channels, polls each channel, and shows independent high/low traces
+- `逻辑分析仪`: shown only when the monitor firmware answers `logic_status`; provides real PIO2/DMA bulk capture for contiguous GPIO ranges, with sample rate, sample count, optional trigger GPIO/level, capture status polling, buffer upload, and multi-channel waveform rendering
 - `UART`: UART channel config, start, write, stop, release, event view
 - `SPI`: SPI channel config, transfer, stop, release, event view
 - `I2C`: I2C channel config, transfer, stop, release, event view
@@ -189,6 +190,7 @@ Monitor actions:
 - `配置并启动` GPIO
 - `启动采集` GPIO input
 - multi-channel GPIO input capture with live per-channel level traces
+- PIO logic analyzer: configure/start/status/read/stop/release capture
 - `读电平`
 - `输出高`
 - `输出低`

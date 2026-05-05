@@ -924,6 +924,25 @@ struct RP2350MonitorWiFiScanResult: Identifiable, Equatable {
     }
 }
 
+struct RP2350LogicCaptureChunk: Identifiable, Equatable {
+    var id: Int { offsetWords }
+    let captureID: Int
+    let offsetWords: Int
+    let words: Int
+    let pinBase: Int
+    let pinCount: Int
+    let sampleRate: Int
+    let samples: Int
+    let recordBits: Int
+    let hex: String
+}
+
+struct RP2350LogicTracePoint: Identifiable, Equatable {
+    let id: Int
+    let sampleIndex: Int
+    let level: Bool
+}
+
 struct RP2350MonitorState {
     enum Availability: Equatable {
         case unknown
@@ -951,6 +970,25 @@ struct RP2350MonitorState {
     var wifiProfiles: [RP2350MonitorWiFiProfile] = []
     var wifiScanActive = false
     var wifiScanResults: [RP2350MonitorWiFiScanResult] = []
+    var logicSupported = false
+    var logicConfigured = false
+    var logicRunning = false
+    var logicComplete = false
+    var logicCaptureID = 0
+    var logicPinBase = 0
+    var logicPinCount = 0
+    var logicSampleRate = 0
+    var logicSamples = 0
+    var logicWords = 0
+    var logicRecordBits = 32
+    var logicTriggerPin = -1
+    var logicTriggerLevel = true
+    var logicBufferWordsMax = 0
+    var logicBufferBytes = 0
+    var logicChunkBytes = 0
+    var logicCaptureChunks: [RP2350LogicCaptureChunk] = []
+    var logicCaptureWords: [UInt32] = []
+    var logicLastReadAt: Date?
     var bufferSummary = "-"
     var eventDepth = 0
     var droppedEvents = 0
@@ -1016,6 +1054,37 @@ struct RP2350MonitorState {
         }
         let labels = wifiScanResults.prefix(4).map(\.label)
         return labels.isEmpty ? "暂无扫描结果。" : labels.joined(separator: "；")
+    }
+
+    var logicStatusLabel: String {
+        if logicRunning { return "采集中" }
+        if logicComplete { return "已完成" }
+        if logicConfigured { return "已配置" }
+        return "未配置"
+    }
+
+    var logicDurationText: String {
+        guard logicSampleRate > 0, logicSamples > 0 else { return "-" }
+        let seconds = Double(logicSamples) / Double(logicSampleRate)
+        if seconds < 0.001 {
+            return String(format: "%.1f us", seconds * 1_000_000)
+        }
+        if seconds < 1 {
+            return String(format: "%.2f ms", seconds * 1000)
+        }
+        return String(format: "%.3f s", seconds)
+    }
+
+    var logicMemorySummary: String {
+        guard logicBufferWordsMax > 0 else { return "-" }
+        return "\(logicWords)/\(logicBufferWordsMax) words"
+    }
+
+    var logicCaptureSummary: String {
+        if logicCaptureChunks.isEmpty {
+            return "尚未读取捕获数据。"
+        }
+        return "已读取 \(logicCaptureWords.count) words，\(logicCaptureChunks.count) 个数据块。"
     }
 
     var isProbing: Bool {
@@ -1632,6 +1701,13 @@ final class ToolkitViewModel: ObservableObject {
     @Published var rp2350MonitorGPIOAnalyzerPull = "up"
     @Published var rp2350MonitorGPIOAnalyzerLive = false
     @Published var rp2350MonitorGPIOAnalyzerActivePins: [Int: Int] = [:]
+    @Published var rp2350LogicPinBase = "16"
+    @Published var rp2350LogicPinCount = "4"
+    @Published var rp2350LogicSampleRate = "1000000"
+    @Published var rp2350LogicSamples = "2048"
+    @Published var rp2350LogicTriggerEnabled = false
+    @Published var rp2350LogicTriggerPin = "16"
+    @Published var rp2350LogicTriggerLevel = true
     @Published var rp2350MonitorUARTChannelID = "1"
     @Published var rp2350MonitorUARTInstance = "0"
     @Published var rp2350MonitorUARTTX = "0"
@@ -8090,11 +8166,14 @@ final class ToolkitViewModel: ObservableObject {
             let status = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "status"], timeout: 2.5)
             let pins = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "pins"], timeout: 2.5)
             let channels = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "channels"], timeout: 2.5)
+            let logic = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "logic_status"], timeout: 2.5)
             applyRP2350MonitorResults(
                 hello: hello,
                 status: status,
                 pins: pins,
                 channels: channels,
+                logic: logic,
+                logicCapabilityChecked: true,
                 responseTitle: "监控固件"
             )
             if force {
@@ -8135,13 +8214,17 @@ final class ToolkitViewModel: ObservableObject {
             await performRP2350MonitorProbe(force: forceProbe)
             return
         }
+        var commands: [[String: Any]] = [
+            ["cmd": "status"],
+            ["cmd": "pins"],
+            ["cmd": "channels"],
+        ]
+        if rp2350Monitor.logicSupported {
+            commands.append(["cmd": "logic_status"])
+        }
         await rp2350MonitorRunCommandSequence(
             title: "刷新监控状态",
-            commands: [
-                ["cmd": "status"],
-                ["cmd": "pins"],
-                ["cmd": "channels"],
-            ],
+            commands: commands,
             device: device,
             refreshAfter: false
         )
@@ -8506,6 +8589,138 @@ final class ToolkitViewModel: ObservableObject {
         }
     }
 
+    func rp2350MonitorLogicConfigure() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
+                return
+            }
+            do {
+                let pinBase = try parseMonitorInt(rp2350LogicPinBase, label: "采样起始 GPIO")
+                let pinCount = try parseMonitorInt(rp2350LogicPinCount, label: "采样通道数")
+                let sampleRate = try parseMonitorInt(rp2350LogicSampleRate, label: "采样率")
+                let samples = try parseMonitorInt(rp2350LogicSamples, label: "样本数")
+                var command: [String: Any] = [
+                    "cmd": "logic_config",
+                    "pin_base": pinBase,
+                    "pin_count": pinCount,
+                    "sample_rate": sampleRate,
+                    "samples": samples,
+                ]
+                if rp2350LogicTriggerEnabled {
+                    command["trigger_pin"] = try parseMonitorInt(rp2350LogicTriggerPin, label: "触发 GPIO")
+                    command["trigger_level"] = rp2350LogicTriggerLevel
+                }
+                await rp2350MonitorRunCommandSequence(
+                    title: "配置逻辑分析仪",
+                    commands: [command, ["cmd": "logic_status"]],
+                    device: device,
+                    refreshAfter: false
+                )
+            } catch {
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .warning, title: "RP2350-Monitor", message: "逻辑分析仪参数无效", detail: detail)
+            }
+        }
+    }
+
+    func rp2350MonitorLogicStart() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
+                return
+            }
+            rp2350Monitor.logicCaptureChunks = []
+            rp2350Monitor.logicCaptureWords = []
+            rp2350Monitor.logicLastReadAt = nil
+            await rp2350MonitorRunCommandSequence(
+                title: "开始逻辑采集",
+                commands: [["cmd": "logic_start"], ["cmd": "logic_status"]],
+                device: device,
+                refreshAfter: false
+            )
+        }
+    }
+
+    func rp2350MonitorLogicRefreshStatus(logActivity: Bool = true) {
+        Task { @MainActor in
+            await rp2350MonitorLogicRefreshStatusAsync(logActivity: logActivity)
+        }
+    }
+
+    private func rp2350MonitorLogicRefreshStatusAsync(logActivity: Bool) async {
+        guard let device = rp2350MonitorSerialDevice() else {
+            rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
+            return
+        }
+        await rp2350MonitorRunCommandSequence(
+            title: "刷新逻辑采集状态",
+            commands: [["cmd": "logic_status"]],
+            device: device,
+            refreshAfter: false,
+            logActivity: logActivity
+        )
+    }
+
+    func rp2350MonitorLogicPollIfRunning() {
+        Task { @MainActor in
+            guard rp2350Monitor.logicRunning, !rp2350MonitorBusy else {
+                return
+            }
+            await rp2350MonitorLogicRefreshStatusAsync(logActivity: false)
+        }
+    }
+
+    func rp2350MonitorLogicReadCapture() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
+                return
+            }
+            await rp2350MonitorRunCommandSequence(
+                title: "读取逻辑波形",
+                commands: [
+                    ["cmd": "logic_status"],
+                    ["cmd": "logic_read", "offset_words": 0, "count_words": 0],
+                    ["cmd": "logic_status"],
+                ],
+                device: device,
+                refreshAfter: false
+            )
+        }
+    }
+
+    func rp2350MonitorLogicStop() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
+                return
+            }
+            await rp2350MonitorRunCommandSequence(
+                title: "停止逻辑采集",
+                commands: [["cmd": "logic_stop"], ["cmd": "logic_status"]],
+                device: device,
+                refreshAfter: false
+            )
+        }
+    }
+
+    func rp2350MonitorLogicRelease() {
+        Task { @MainActor in
+            guard let device = rp2350MonitorSerialDevice() else {
+                rp2350Monitor.availability = .unsupported(rp2350MonitorTransportUnavailableMessage())
+                return
+            }
+            await rp2350MonitorRunCommandSequence(
+                title: "释放逻辑分析仪",
+                commands: [["cmd": "logic_release"], ["cmd": "logic_status"]],
+                device: device,
+                refreshAfter: true
+            )
+        }
+    }
+
     func rp2350MonitorConfigureUART() {
         Task { @MainActor in
             guard let device = rp2350MonitorSerialDevice() else {
@@ -8741,9 +8956,18 @@ final class ToolkitViewModel: ObservableObject {
             var statusResult: RP2350MonitorTransactionResult?
             var pinsResult: RP2350MonitorTransactionResult?
             var channelsResult: RP2350MonitorTransactionResult?
+            var logicResult: RP2350MonitorTransactionResult?
             for command in commands {
                 let commandName = command["cmd"] as? String
-                let timeout: TimeInterval = commandName == "wifi_connect" ? 18.0 : 3.0
+                let timeout: TimeInterval
+                switch commandName {
+                case "wifi_connect":
+                    timeout = 18.0
+                case "logic_read":
+                    timeout = 25.0
+                default:
+                    timeout = 3.0
+                }
                 let result = try await RP2350MonitorClient.transactSerial(device: device, payload: command, timeout: timeout)
                 commandLines.append(contentsOf: result.lines)
                 guard result.response?["ok"] as? Bool != false else {
@@ -8752,6 +8976,8 @@ final class ToolkitViewModel: ObservableObject {
                 switch result.response?["cmd"] as? String {
                 case "status", "buffer_status":
                     statusResult = result
+                case "logic_status", "logic_config":
+                    logicResult = result
                 case "pins":
                     pinsResult = result
                 case "channels":
@@ -8764,12 +8990,16 @@ final class ToolkitViewModel: ObservableObject {
                 statusResult = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "status"], timeout: 2.5)
                 pinsResult = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "pins"], timeout: 2.5)
                 channelsResult = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "channels"], timeout: 2.5)
+                if rp2350Monitor.logicSupported {
+                    logicResult = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "logic_status"], timeout: 2.5)
+                }
             }
             applyRP2350MonitorResults(
                 hello: nil,
                 status: statusResult,
                 pins: pinsResult,
                 channels: channelsResult,
+                logic: logicResult,
                 extraLines: commandLines,
                 responseTitle: title
             )
@@ -8779,14 +9009,18 @@ final class ToolkitViewModel: ObservableObject {
         } catch {
             let detail = error.localizedDescription
             if refreshAfter,
-               let statusResult = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "status"], timeout: 2.5) {
+                let statusResult = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "status"], timeout: 2.5) {
                 let pinsResult = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "pins"], timeout: 2.5)
                 let channelsResult = try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "channels"], timeout: 2.5)
+                let logicResult = rp2350Monitor.logicSupported
+                    ? try? await RP2350MonitorClient.transactSerial(device: device, payload: ["cmd": "logic_status"], timeout: 2.5)
+                    : nil
                 applyRP2350MonitorResults(
                     hello: nil,
                     status: statusResult,
                     pins: pinsResult,
                     channels: channelsResult,
+                    logic: logicResult,
                     extraLines: commandLines,
                     responseTitle: "\(title)失败"
                 )
@@ -8888,6 +9122,8 @@ final class ToolkitViewModel: ObservableObject {
         status: RP2350MonitorTransactionResult?,
         pins: RP2350MonitorTransactionResult?,
         channels: RP2350MonitorTransactionResult?,
+        logic: RP2350MonitorTransactionResult? = nil,
+        logicCapabilityChecked: Bool = false,
         extraLines: [String] = [],
         responseTitle: String
     ) {
@@ -8906,6 +9142,9 @@ final class ToolkitViewModel: ObservableObject {
             if let wifi = dictionary(statusResponse["wifi"]) {
                 applyRP2350MonitorWiFi(wifi, to: &next)
             }
+            if let logic = dictionary(statusResponse["logic"]) {
+                applyRP2350MonitorLogic(logic, to: &next)
+            }
             if let buffers = dictionary(statusResponse["buffers"]) {
                 applyRP2350MonitorBuffers(buffers, to: &next)
             }
@@ -8913,6 +9152,16 @@ final class ToolkitViewModel: ObservableObject {
             if !parsedChannels.isEmpty || statusResponse["channels"] != nil {
                 next.channels = parsedChannels
             }
+        }
+
+        if logicCapabilityChecked {
+            next.logicSupported = false
+        }
+        if let logicResponse = logic?.response,
+           logicResponse["ok"] as? Bool == true,
+           let logic = dictionary(logicResponse["logic"]) {
+            next.logicSupported = true
+            applyRP2350MonitorLogic(logic, to: &next)
         }
 
         if let pinsResponse = pins?.response {
@@ -8927,7 +9176,14 @@ final class ToolkitViewModel: ObservableObject {
         allLines.append(contentsOf: status?.lines ?? [])
         allLines.append(contentsOf: pins?.lines ?? [])
         allLines.append(contentsOf: channels?.lines ?? [])
+        allLines.append(contentsOf: logic?.lines ?? [])
         allLines.append(contentsOf: extraLines)
+        let logicChunks = parseRP2350LogicCaptureChunks(from: allLines)
+        if !logicChunks.isEmpty {
+            next.logicCaptureChunks = logicChunks.sorted { $0.offsetWords < $1.offsetWords }
+            next.logicCaptureWords = decodeRP2350LogicWords(from: next.logicCaptureChunks)
+            next.logicLastReadAt = Date()
+        }
         let newEntries = allLines.map { line -> RP2350MonitorEventLine in
             let kind = dictionaryFromJSONLine(line).flatMap { stringValue($0["type"]) } ?? "raw"
             return RP2350MonitorEventLine(kind: kind, text: line)
@@ -8936,6 +9192,106 @@ final class ToolkitViewModel: ObservableObject {
         next.lastResponse = responseTitle
         syncRP2350MonitorWiFiDefaults(from: next)
         rp2350Monitor = next
+    }
+
+    private func applyRP2350MonitorLogic(_ logic: [String: Any], to state: inout RP2350MonitorState) {
+        state.logicConfigured = boolValue(logic["configured"]) ?? state.logicConfigured
+        state.logicRunning = boolValue(logic["running"]) ?? state.logicRunning
+        state.logicComplete = boolValue(logic["complete"]) ?? state.logicComplete
+        state.logicCaptureID = intValue(logic["capture_id"]) ?? state.logicCaptureID
+        state.logicPinBase = intValue(logic["pin_base"]) ?? state.logicPinBase
+        state.logicPinCount = intValue(logic["pin_count"]) ?? state.logicPinCount
+        state.logicSampleRate = intValue(logic["sample_rate"]) ?? state.logicSampleRate
+        state.logicSamples = intValue(logic["samples"]) ?? state.logicSamples
+        state.logicWords = intValue(logic["words"]) ?? state.logicWords
+        state.logicRecordBits = intValue(logic["record_bits"]) ?? state.logicRecordBits
+        state.logicTriggerPin = intValue(logic["trigger_pin"]) ?? state.logicTriggerPin
+        state.logicTriggerLevel = boolValue(logic["trigger_level"]) ?? state.logicTriggerLevel
+        state.logicBufferWordsMax = intValue(logic["buffer_words_max"]) ?? state.logicBufferWordsMax
+        state.logicBufferBytes = intValue(logic["buffer_bytes"]) ?? state.logicBufferBytes
+        state.logicChunkBytes = intValue(logic["chunk_bytes"]) ?? state.logicChunkBytes
+    }
+
+    private func parseRP2350LogicCaptureChunks(from lines: [String]) -> [RP2350LogicCaptureChunk] {
+        lines.compactMap { line in
+            guard let document = dictionaryFromJSONLine(line),
+                  stringValue(document["type"]) == "logic",
+                  let captureID = intValue(document["capture_id"]),
+                  let offsetWords = intValue(document["offset_words"]),
+                  let words = intValue(document["words"]),
+                  let pinBase = intValue(document["pin_base"]),
+                  let pinCount = intValue(document["pin_count"]),
+                  let sampleRate = intValue(document["sample_rate"]),
+                  let samples = intValue(document["samples"]),
+                  let recordBits = intValue(document["record_bits"]),
+                  let hex = stringValue(document["hex"]) else {
+                return nil
+            }
+            return RP2350LogicCaptureChunk(
+                captureID: captureID,
+                offsetWords: offsetWords,
+                words: words,
+                pinBase: pinBase,
+                pinCount: pinCount,
+                sampleRate: sampleRate,
+                samples: samples,
+                recordBits: recordBits,
+                hex: hex
+            )
+        }
+    }
+
+    private func decodeRP2350LogicWords(from chunks: [RP2350LogicCaptureChunk]) -> [UInt32] {
+        let sortedChunks = chunks.sorted { $0.offsetWords < $1.offsetWords }
+        let totalWords = sortedChunks.map { $0.offsetWords + $0.words }.max() ?? 0
+        guard totalWords > 0 else {
+            return []
+        }
+        var words = [UInt32](repeating: 0, count: totalWords)
+        for chunk in sortedChunks {
+            let bytes = decodeHexBytes(chunk.hex)
+            let chunkWords = min(chunk.words, bytes.count / 4)
+            for index in 0..<chunkWords {
+                let offset = index * 4
+                let value = UInt32(bytes[offset]) |
+                    (UInt32(bytes[offset + 1]) << 8) |
+                    (UInt32(bytes[offset + 2]) << 16) |
+                    (UInt32(bytes[offset + 3]) << 24)
+                let target = chunk.offsetWords + index
+                if target < words.count {
+                    words[target] = value
+                }
+            }
+        }
+        return words
+    }
+
+    private func decodeHexBytes(_ hex: String) -> [UInt8] {
+        let scalars = Array(hex.utf8)
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(scalars.count / 2)
+        var index = 0
+        while index + 1 < scalars.count {
+            if let high = hexNibble(scalars[index]),
+               let low = hexNibble(scalars[index + 1]) {
+                bytes.append((high << 4) | low)
+            }
+            index += 2
+        }
+        return bytes
+    }
+
+    private func hexNibble(_ char: UInt8) -> UInt8? {
+        switch char {
+        case 48...57:
+            return char - 48
+        case 65...70:
+            return char - 55
+        case 97...102:
+            return char - 87
+        default:
+            return nil
+        }
     }
 
     private func applyRP2350MonitorWiFi(_ wifi: [String: Any], to state: inout RP2350MonitorState) {
@@ -11317,6 +11673,7 @@ final class RP2350MonitorWindowPresenter {
 private enum RP2350MonitorDetailTab: String, CaseIterable, Identifiable {
     case status = "状态"
     case gpio = "GPIO 逻辑"
+    case logic = "逻辑分析仪"
     case uart = "UART"
     case spi = "SPI"
     case i2c = "I2C"
@@ -11330,7 +11687,16 @@ struct RP2350MonitorDetailWindowView: View {
     let board: SupportedBoard
     @State private var selectedTab: RP2350MonitorDetailTab = .status
 
+    private var availableTabs: [RP2350MonitorDetailTab] {
+        RP2350MonitorDetailTab.allCases.filter { tab in
+            tab != .logic || vm.rp2350Monitor.logicSupported
+        }
+    }
+
     var body: some View {
+        let visibleTabs = availableTabs
+        let effectiveTab = visibleTabs.contains(selectedTab) ? selectedTab : .status
+
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -11351,18 +11717,20 @@ struct RP2350MonitorDetailWindowView: View {
             }
 
             Picker("", selection: $selectedTab) {
-                ForEach(RP2350MonitorDetailTab.allCases) { tab in
+                ForEach(visibleTabs) { tab in
                     Text(tab.rawValue).tag(tab)
                 }
             }
             .pickerStyle(.segmented)
 
             Group {
-                switch selectedTab {
+                switch effectiveTab {
                 case .status:
                     RP2350MonitorStatusPanel(vm: vm)
                 case .gpio:
                     RP2350MonitorGPIOPanel(vm: vm)
+                case .logic:
+                    RP2350MonitorLogicAnalyzerPanel(vm: vm)
                 case .uart:
                     RP2350MonitorUARTPanel(vm: vm)
                 case .spi:
@@ -11379,6 +11747,9 @@ struct RP2350MonitorDetailWindowView: View {
         .frame(minWidth: 1060, minHeight: 740)
         .background(Color.toolkitWindowBackground)
         .onAppear {
+            if !visibleTabs.contains(selectedTab) {
+                selectedTab = .status
+            }
             if !vm.rp2350Monitor.tabAvailable {
                 vm.rp2350MonitorProbe()
             } else {
@@ -11517,6 +11888,235 @@ struct RP2350MonitorGPIOPanel: View {
         .onReceive(Timer.publish(every: 0.8, on: .main, in: .common).autoconnect()) { _ in
             vm.rp2350MonitorPollGPIOAnalyzer()
         }
+    }
+}
+
+struct RP2350MonitorLogicAnalyzerPanel: View {
+    @ObservedObject var vm: ToolkitViewModel
+    private let statusColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) {
+                GroupBox("PIO 采样设置") {
+                    VStack(alignment: .leading, spacing: 9) {
+                        HStack(spacing: 8) {
+                            MonitorField("起始 GPIO", text: $vm.rp2350LogicPinBase, width: 82)
+                            MonitorField("通道数", text: $vm.rp2350LogicPinCount, width: 72)
+                            MonitorField("采样率 Hz", text: $vm.rp2350LogicSampleRate, width: 116)
+                            MonitorField("样本数", text: $vm.rp2350LogicSamples, width: 92)
+                        }
+                        HStack(spacing: 8) {
+                            Toggle("触发", isOn: $vm.rp2350LogicTriggerEnabled)
+                                .font(.caption)
+                            MonitorField("触发 GPIO", text: $vm.rp2350LogicTriggerPin, width: 82)
+                                .disabled(!vm.rp2350LogicTriggerEnabled)
+                            Picker("触发电平", selection: $vm.rp2350LogicTriggerLevel) {
+                                Text("高").tag(true)
+                                Text("低").tag(false)
+                            }
+                            .frame(width: 96)
+                            .disabled(!vm.rp2350LogicTriggerEnabled)
+                        }
+                        HStack(spacing: 8) {
+                            CompactMonitorButton("配置", systemImage: "slider.horizontal.3", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorLogicConfigure() }
+                            CompactMonitorButton("开始采集", systemImage: "record.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorLogicStart() }
+                            CompactMonitorButton("刷新", systemImage: "arrow.clockwise", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorLogicRefreshStatus() }
+                            CompactMonitorButton("读取波形", systemImage: "waveform.path", enabled: !vm.rp2350MonitorBusy && vm.rp2350Monitor.logicComplete) { vm.rp2350MonitorLogicReadCapture() }
+                        }
+                        HStack(spacing: 8) {
+                            CompactMonitorButton("停止", systemImage: "pause.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorLogicStop() }
+                            CompactMonitorButton("释放", systemImage: "xmark.circle", enabled: !vm.rp2350MonitorBusy) { vm.rp2350MonitorLogicRelease() }
+                        }
+                        Text("PIO2 + DMA 会先把连续 GPIO 范围采样到板端 SRAM，再上传捕获缓冲；适合短窗口高速数字信号，不是轮询 GPIO。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 8)
+                }
+
+                GroupBox("采样状态") {
+                    LazyVGrid(columns: statusColumns, spacing: 8) {
+                        StatusCard(title: "状态", value: vm.rp2350Monitor.logicStatusLabel, ok: vm.rp2350Monitor.logicComplete, symbol: "scope")
+                        StatusCard(title: "采样率", value: vm.rp2350Monitor.logicSampleRate > 0 ? "\(vm.rp2350Monitor.logicSampleRate) Hz" : "-", ok: vm.rp2350Monitor.logicConfigured, symbol: "speedometer")
+                        StatusCard(title: "时窗", value: vm.rp2350Monitor.logicDurationText, ok: vm.rp2350Monitor.logicConfigured, symbol: "timer")
+                        StatusCard(title: "缓冲", value: vm.rp2350Monitor.logicMemorySummary, ok: vm.rp2350Monitor.logicWords <= max(vm.rp2350Monitor.logicBufferWordsMax, 1), symbol: "memorychip")
+                    }
+                    .padding(.top, 8)
+                }
+
+                GroupBox("读取状态") {
+                    Text(vm.rp2350Monitor.logicCaptureSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .frame(width: 462, alignment: .topLeading)
+
+            GroupBox("逻辑波形") {
+                RP2350LogicAnalyzerWaveform(state: vm.rp2350Monitor)
+                    .padding(.top, 8)
+            }
+        }
+        .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
+            vm.rp2350MonitorLogicPollIfRunning()
+        }
+    }
+}
+
+struct RP2350LogicAnalyzerWaveform: View {
+    let state: RP2350MonitorState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if state.logicCaptureWords.isEmpty || state.logicPinCount <= 0 {
+                Text("完成采集后点击“读取波形”，这里会显示按采样率展开的多通道数字波形。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                HStack(spacing: 12) {
+                    Text("GPIO \(state.logicPinBase)..\(state.logicPinBase + max(state.logicPinCount - 1, 0))")
+                    Text("\(state.logicSamples) samples")
+                    Text(state.logicDurationText)
+                    Text("capture #\(state.logicCaptureID)")
+                    Spacer(minLength: 0)
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(0..<max(state.logicPinCount, 0), id: \.self) { relativePin in
+                            let gpio = state.logicPinBase + relativePin
+                            let points = RP2350LogicCaptureDecoder.tracePoints(
+                                words: state.logicCaptureWords,
+                                pinCount: state.logicPinCount,
+                                samples: state.logicSamples,
+                                recordBits: state.logicRecordBits,
+                                relativePin: relativePin,
+                                maxPoints: 900
+                            )
+                            RP2350LogicTraceRow(gpio: gpio, points: points)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(minHeight: 520, maxHeight: .infinity)
+    }
+}
+
+struct RP2350LogicTraceRow: View {
+    let gpio: Int
+    let points: [RP2350LogicTracePoint]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("GPIO \(gpio)")
+                .font(.caption.weight(.semibold))
+                .frame(width: 70, alignment: .leading)
+            GeometryReader { proxy in
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.toolkitInputBackground)
+                    ForEach(0..<8, id: \.self) { index in
+                        Rectangle()
+                            .fill(Color.primary.opacity(index % 2 == 0 ? 0.05 : 0.025))
+                            .frame(width: 1)
+                            .offset(x: proxy.size.width * CGFloat(index) / 7.0)
+                    }
+                    if points.isEmpty {
+                        Text("无数据")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        waveformPath(size: proxy.size)
+                            .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .square, lineJoin: .miter))
+                    }
+                }
+            }
+            .frame(height: 42)
+            Text(points.last?.level == true ? "H" : "L")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(points.last?.level == true ? Color.green : Color.secondary)
+                .frame(width: 20)
+        }
+    }
+
+    private func waveformPath(size: CGSize) -> Path {
+        let highY: CGFloat = 10
+        let lowY = max(highY + 12, size.height - 10)
+        let width = max(size.width, 1)
+        let count = max(points.count, 2)
+        let step = width / CGFloat(count - 1)
+        var path = Path()
+        for index in points.indices {
+            let x = CGFloat(index) * step
+            let y = points[index].level ? highY : lowY
+            if index == points.startIndex {
+                path.move(to: CGPoint(x: x, y: y))
+            } else {
+                let previousY = points[index - 1].level ? highY : lowY
+                path.addLine(to: CGPoint(x: x, y: previousY))
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+        }
+        return path
+    }
+}
+
+enum RP2350LogicCaptureDecoder {
+    static func tracePoints(
+        words: [UInt32],
+        pinCount: Int,
+        samples: Int,
+        recordBits: Int,
+        relativePin: Int,
+        maxPoints: Int
+    ) -> [RP2350LogicTracePoint] {
+        guard pinCount > 0, samples > 0, recordBits > 0, relativePin >= 0, relativePin < pinCount, !words.isEmpty else {
+            return []
+        }
+        let availableSamples = min(samples, (words.count * recordBits) / pinCount)
+        guard availableSamples > 0 else {
+            return []
+        }
+        let step = max(1, availableSamples / max(maxPoints, 1))
+        var points: [RP2350LogicTracePoint] = []
+        points.reserveCapacity(min(maxPoints, availableSamples))
+        var sample = 0
+        while sample < availableSamples {
+            points.append(RP2350LogicTracePoint(
+                id: sample,
+                sampleIndex: sample,
+                level: levelAt(words: words, pinCount: pinCount, recordBits: recordBits, relativePin: relativePin, sample: sample)
+            ))
+            sample += step
+        }
+        if points.last?.sampleIndex != availableSamples - 1 {
+            let lastSample = availableSamples - 1
+            points.append(RP2350LogicTracePoint(
+                id: lastSample,
+                sampleIndex: lastSample,
+                level: levelAt(words: words, pinCount: pinCount, recordBits: recordBits, relativePin: relativePin, sample: lastSample)
+            ))
+        }
+        return points
+    }
+
+    private static func levelAt(words: [UInt32], pinCount: Int, recordBits: Int, relativePin: Int, sample: Int) -> Bool {
+        let bitIndex = relativePin + sample * pinCount
+        let wordIndex = bitIndex / recordBits
+        guard wordIndex >= 0, wordIndex < words.count else {
+            return false
+        }
+        let bitPosition = (bitIndex % recordBits) + 32 - recordBits
+        return (words[wordIndex] & (UInt32(1) << UInt32(bitPosition))) != 0
     }
 }
 
