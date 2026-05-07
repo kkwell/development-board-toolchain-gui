@@ -189,6 +189,27 @@ private enum AppStrings {
             ("执行 Logo 更新", "Update Logo"),
             ("执行设备树更新", "Update Device Tree"),
             ("设备树", "Device Tree"),
+            ("刷入默认 UF2，恢复当前自动控制和调试基础能力", "Flash the default UF2 to restore automatic control and debugging capabilities"),
+            ("后续通过问答生成的功能，会以这套初始程序能力为基础进行自动编译、部署和调试。", "Features generated through later prompts will use this initial firmware capability as the base for automatic build, deployment, and debugging."),
+            ("先选择导出位置，再回读板载 Flash 为 UF2", "Choose an export location, then read back onboard Flash as UF2"),
+            ("将当前板载 Flash 导出为 UF2，便于备份、比对和问题回溯。", "Export onboard Flash as UF2 for backup, comparison, and troubleshooting."),
+            ("初始程序路径", "Initial firmware path"),
+            ("初始程序", "Initial Firmware"),
+            ("保存 Flash", "Save Flash"),
+            ("当前没有找到初始程序 UF2", "No initial firmware UF2 found"),
+            ("初始程序 UF2 文件不存在", "Initial firmware UF2 file does not exist"),
+            ("当前未找到初始程序 UF2", "No initial firmware UF2 found"),
+            ("后台处理中", "Processing in background"),
+            ("设备已识别", "Device Detected"),
+            ("设备已断开", "Device Disconnected"),
+            ("等待识别", "Waiting for Detection"),
+            ("当前激活设备", "Active Device"),
+            ("当前在线", "Online"),
+            ("设备未连接", "Device Disconnected"),
+            ("当前", "Current"),
+            ("台", "device(s)"),
+            ("在线", "Online"),
+            ("嘉立创", "JLC"),
             ("本地 DBT Agent", "Local Embed Labs Agent"),
             ("DBT Agent", "Embed Labs Agent"),
             ("开发板", "Board"),
@@ -11600,6 +11621,11 @@ struct ColorEasyPICO2OverviewTab: View {
 struct ColorEasyPICO2FirmwareTab: View {
     @ObservedObject var vm: ToolkitViewModel
     let board: SupportedBoard
+    @Environment(\.appLanguage) private var appLanguage
+
+    private func localized(_ key: String) -> String {
+        AppStrings.localized(key, language: appLanguage)
+    }
 
     private var initialProgramMissingReason: String? {
         if !vm.localAgentRunning {
@@ -11625,23 +11651,30 @@ struct ColorEasyPICO2FirmwareTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            GroupBox("初始程序") {
+            GroupBox(localized("初始程序")) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("后续通过问答生成的功能，会以这套初始程序能力为基础进行自动编译、部署和调试。")
+                    Text(localized("后续通过问答生成的功能，会以这套初始程序能力为基础进行自动编译、部署和调试。"))
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
-                    ActionTile(title: "刷写初始程序", subtitle: "刷入 \(board.displayName) 默认 UF2，恢复当前自动控制和调试基础能力", enabled: initialProgramMissingReason == nil, disabledReason: initialProgramMissingReason, helpText: initialProgramHelpText, symbol: "arrow.down.doc") { vm.rp2350FlashUF2() }
+                    ActionTile(
+                        title: "刷写初始程序",
+                        subtitle: localized("刷入默认 UF2，恢复当前自动控制和调试基础能力"),
+                        enabled: initialProgramMissingReason == nil,
+                        disabledReason: initialProgramMissingReason,
+                        helpText: initialProgramHelpText,
+                        symbol: "arrow.down.doc"
+                    ) { vm.rp2350FlashUF2() }
                 }
                 .padding(.top, 8)
             }
 
-            GroupBox("保存 Flash") {
+            GroupBox(localized("保存 Flash")) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(vm.rp2350ReadbackPath.isEmpty ? "点击按钮后选择导出位置" : vm.rp2350ReadbackPath)
+                    Text(vm.rp2350ReadbackPath.isEmpty ? localized("点击按钮后选择导出位置") : vm.rp2350ReadbackPath)
                         .lineLimit(2)
                         .truncationMode(.middle)
                         .foregroundStyle(vm.rp2350ReadbackPath.isEmpty ? .secondary : .primary)
-                    Text("将当前板载 Flash 导出为 UF2，便于备份、比对和问题回溯。")
+                    Text(localized("将当前板载 Flash 导出为 UF2，便于备份、比对和问题回溯。"))
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
                     ActionTile(title: "保存 Flash", subtitle: "先选择导出位置，再回读板载 Flash 为 UF2", enabled: vm.localAgentRunning, disabledReason: vm.localAgentRunning ? nil : "本地 DBT Agent 离线", symbol: "externaldrive.badge.checkmark") { vm.rp2350SaveFlash() }
@@ -15799,6 +15832,7 @@ struct BoardModelStandaloneWindowView: View {
 
 struct ToolkitHomeHeroCard: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appLanguage) private var appLanguage
     let title: String
     let subtitle: String
     let heroState: ToolkitHeroState
@@ -15807,6 +15841,10 @@ struct ToolkitHomeHeroCard: View {
     let actionHint: String
     let action: (() -> Void)?
     @State private var hovering = false
+
+    private func localized(_ key: String) -> String {
+        AppStrings.localized(key, language: appLanguage)
+    }
 
     private var accentColors: [Color] {
         if colorScheme == .dark {
@@ -15914,14 +15952,14 @@ struct ToolkitHomeHeroCard: View {
                         .clipShape(Capsule())
                 }
 
-                Text(subtitle)
+                Text(localized(subtitle))
                     .font(.system(.subheadline, design: .rounded).weight(.medium))
                     .foregroundStyle(subtitleColor)
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 10) {
                     Label(
-                        heroState == .deviceReady ? "设备已识别" : (heroState == .deviceClose ? "设备已断开" : "等待识别"),
+                        localized(heroState == .deviceReady ? "设备已识别" : (heroState == .deviceClose ? "设备已断开" : "等待识别")),
                         systemImage: heroState == .deviceReady ? "checkmark.circle.fill" : (heroState == .deviceClose ? "xmark.circle.fill" : "wave.3.right.circle.fill")
                     )
                         .font(.system(.caption, design: .rounded).weight(.semibold))
@@ -15932,12 +15970,12 @@ struct ToolkitHomeHeroCard: View {
                             ProgressView()
                                 .controlSize(.small)
                                 .tint(accentTextColor)
-                            Text("后台处理中")
+                            Text(localized("后台处理中"))
                                 .font(.system(.caption, design: .rounded).weight(.semibold))
                                 .foregroundStyle(accentTextColor)
                         }
                     } else if !actionHint.isEmpty {
-                        Text(actionHint)
+                        Text(localized(actionHint))
                             .font(.system(.caption, design: .rounded).weight(.semibold))
                             .foregroundStyle(accentTextColor)
                     }

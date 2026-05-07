@@ -261,14 +261,14 @@
 "低" = "Low";
 "你的支持会直接用于项目持续更新、功能打磨与体验优化 ❤️" = "Your support is directly used for ongoing project updates, feature polishing, and experience optimization ❤️";
 "保存" = "Save";
-"保存 Flash" = "save Flash";
+"保存 Flash" = "Save Flash";
 "保存并连接" = "Save and Connect";
 "保存并连接 Wi-Fi" = "Save and connect to Wi-Fi";
 "修复 USB ECM 重枚举后的主机静态 IP" = "Fix host static IP after USB ECM re-enumeration";
 "停止" = "stop";
 "停止通道" = "stopchannel";
 "停止逻辑采集" = "Stop Logic Acquisition";
-"先选择导出位置，再回读板载 Flash 为 UF2" = "Select the export location first, and then read back the onboard Flash as UF2";
+"先选择导出位置，再回读板载 Flash 为 UF2" = "Choose an export location, then read back onboard Flash as UF2";
 "全部" = "All";
 "全部 JSONL 数据" = "All JSONL data";
 "全量安装任务已提交" = "Full Setup Task Submitted";
@@ -295,9 +295,10 @@
 "切换 Loader" = "Toggle Loader";
 "切换后界面文本会立即更新，后台任务日志和来自设备的原始输出保持原文。" = "The interface text updates immediately after switching language. Background task logs and raw device output remain in their original language.";
 "初始化镜像" = "Factory Image";
-"初始程序" = "Initializer";
-"初始程序 UF2 文件不存在" = "Initializer UF2 file does not exist";
+"初始程序" = "Initial Firmware";
+"初始程序 UF2 文件不存在" = "Initial firmware UF2 file does not exist";
 "初始程序路径：\\(compactPath)" = "Initial program path: \\(compactPath)";
+"初始程序路径" = "Initial firmware path";
 "初始镜像" = "Factory Image";
 "初始镜像准备失败" = "Initial image preparation failed";
 "初始镜像包" = "Initial Mirror Package";
@@ -424,7 +425,7 @@
 "宿主 LLVM 工具链仍有缺失" = "Host LLVM toolchain still missing";
 "宿主工具" = "host tools";
 "密码" = "Password";
-"将当前板载 Flash 导出为 UF2，便于备份、比对和问题回溯。" = "Export your current onboard Flash to UF2 for backup, comparison, and issue backtracking.";
+"将当前板载 Flash 导出为 UF2，便于备份、比对和问题回溯。" = "Export onboard Flash as UF2 for backup, comparison, and troubleshooting.";
 "将自动同步初始镜像并准备刷机工具" = "The initial image will be automatically synchronized and the refresh tool will be prepared";
 "将自动导入发布工作区" = "Publishing workspace will be automatically imported";
 "将通过 Terminal 连接当前开发板。" = "The current board will be connected via Terminal.";
@@ -490,6 +491,8 @@
 "异常" = "Abnormal";
 "引脚" = "pin";
 "当前" = "Current";
+"当前在线" = "Online";
+"当前激活设备" = "Active Device";
 "当前 Pico 固件未提供 RP2350-Monitor JSONL 协议：\\(message)" = "The current Pico firmware does not provide the RP2350-Monitor JSONL protocol: \\(message)";
 "当前 SSH 尚未恢复" = "Current SSH has not been restored";
 "当前 Wi-Fi" = "Current Wi-Fi";
@@ -530,7 +533,7 @@
 "当前控制链路：\\(board.integrationStatus)" = "Current control link: \\(board.integrationStatus)";
 "当前控制页" = "Current Control Page";
 "当前服务进程不属于 GUI 管理范围，未自动清理" = "The current service process does not fall under the scope of GUI management, and has not been automatically cleaned up";
-"当前未找到初始程序 UF2" = "Initializer UF2 not currently found";
+"当前未找到初始程序 UF2" = "No initial firmware UF2 found";
 "当前未检测到 USB ECM 连接，无法恢复主机静态地址。" = "No USB ECM connection is currently detected and the host static address cannot be recovered.";
 "当前未检测到可用于刷写的 RP2350 设备连接。请确认开发板已进入 RP2350 单 USB 或 BOOTSEL 状态。" = "No RP2350 device connections are currently detected for flashing. Please confirm that the development board has entered the RP2350 single USB or bootsel state.";
 "当前未检测到可用于刷写的 TaishanPi 连接。请确认开发板已进入 Loader、Maskrom 或 USB ECM 状态。" = "No TaishanPi connections are currently detected for flashing. Please confirm that the board is in Loader, Maskrom or USB ECM state.";
@@ -544,7 +547,7 @@
 "当前没有可显示的设备控制页" = "There are currently no device control pages to display";
 "当前没有可用的开发板 IP" = "No development board IP available at the moment";
 "当前没有已配置通道。" = "There are currently no configured channels.";
-"当前没有找到初始程序 UF2" = "Initial program UF2 not currently found";
+"当前没有找到初始程序 UF2" = "No initial firmware UF2 found";
 "当前没有找到模型或图片资源。" = "No model or picture resources were found at this time.";
 "当前没有找到模型或图片资源；安装或更新对应板卡资源后会自动恢复展示。" = "There are currently no model or picture resources found; installing or updating the corresponding board resources will automatically resume the display.";
 "当前没有检测到可刷写的 RP2350 设备。" = "No flashable RP2350 device was detected.";
@@ -848,7 +851,8 @@
 "等待检查更新" = "Waiting to check for updates";
 "等待检测" = "Waiting for detection";
 "等待检测 \\(board.displayName) 状态" = "Waiting to detect \\(board.displayName) status";
-"等待识别" = "waiting for detection";
+"等待识别" = "Waiting for Detection";
+"刷入默认 UF2，恢复当前自动控制和调试基础能力" = "Flash the default UF2 to restore automatic control and debugging capabilities";
 "等待连接" = "Waiting for Connection";
 "管理员授权执行失败。" = "Administrator authorization failed.";
 "管理员授权执行失败（\\(code)）。" = "Administrator authorization failed (\\(code)).";
@@ -890,6 +894,7 @@
 "设备接口" = "Device Interface";
 "设备数量变化" = "Device count changed";
 "设备未连接" = "Device Not Connected";
+"台" = "device(s)";
 "设备树" = "Device Tree";
 "设备树刷写" = "Device Tree Flashing";
 "设备模式切换中，请等待状态更新完成" = "Device mode is switching. Wait for the status update to finish.";
