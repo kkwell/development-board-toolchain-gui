@@ -15,7 +15,8 @@ Click the preview below to open the original WebM recording.
 ## Scope
 
 - GUI app bundle name: `DBT-Agent.app`
-- GUI in-app title: `Development Board Toolchain`
+- GUI in-app title: `Embed Labs`
+- macOS display name: `Embed Labs`
 - Release archive: `DBT-Agent-<version>.zip`
 
 This repository builds and releases the GUI application package.

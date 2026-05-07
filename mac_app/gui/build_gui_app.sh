@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/build"
 APP_NAME="DBT-Agent"
+APP_DISPLAY_NAME="${APP_DISPLAY_NAME:-Embed Labs}"
 APP_DIR="${BUILD_DIR}/${APP_NAME}.app"
 BIN_DIR="${APP_DIR}/Contents/MacOS"
 RES_DIR="${APP_DIR}/Contents/Resources"
@@ -18,6 +19,7 @@ WECHAT_QR_SOURCE="${REPO_ROOT}/assets/weixin.JPG"
 PICO2W_PREVIEW_SOURCE="${REPO_ROOT}/assets/Pico2WPreview.png"
 BOARD_ASSETS_SOURCE="${REPO_ROOT}/board_plugins/boards"
 BOARD_ASSETS_DEST="${RES_DIR}/BoardAssets/boards"
+GUI_RESOURCES_SOURCE="${SCRIPT_DIR}/Resources"
 ICONSET_DIR="${BUILD_DIR}/AppIcon.iconset"
 ICON_MASTER="${BUILD_DIR}/AppIcon-master.png"
 DEFAULT_APP_VERSION="$(tr -d '\n' < "${REPO_ROOT}/VERSION" 2>/dev/null || printf '1.0.0')"
@@ -98,7 +100,7 @@ build_icon() {
   fi
 }
 
-echo "Building ${APP_NAME} ${APP_VERSION} in ${BUILD_DIR}"
+echo "Building ${APP_DISPLAY_NAME} (${APP_NAME}) ${APP_VERSION} in ${BUILD_DIR}"
 rm -rf "${APP_DIR}"
 mkdir -p "${BIN_DIR}" "${RES_DIR}"
 
@@ -130,9 +132,9 @@ cat >"${APP_DIR}/Contents/Info.plist" <<EOF
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>${APP_NAME}</string>
+  <string>${APP_DISPLAY_NAME}</string>
   <key>CFBundleDisplayName</key>
-  <string>${APP_NAME}</string>
+  <string>${APP_DISPLAY_NAME}</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -191,6 +193,11 @@ if [[ -d "${BOARD_ASSETS_SOURCE}" ]]; then
     mkdir -p "${BOARD_ASSETS_DEST}/${board_id}"
     ditto "${board_dir}/assets" "${BOARD_ASSETS_DEST}/${board_id}/assets"
   done
+fi
+
+if [[ -d "${GUI_RESOURCES_SOURCE}" ]]; then
+  echo "Copying GUI localization resources"
+  ditto "${GUI_RESOURCES_SOURCE}" "${RES_DIR}"
 fi
 
 echo "Packaging app archive"

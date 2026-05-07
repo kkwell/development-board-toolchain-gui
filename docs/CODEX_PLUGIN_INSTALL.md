@@ -2,7 +2,7 @@
 
 This document defines the canonical install shape for the local Codex plugin `dbt-agent`.
 
-`DBT-Agent` is the Codex-facing name. `DBT` is the short form of `Development Board Toolchain`.
+`Embed Labs` is the Codex-facing display name. `dbt-agent` remains the stable plugin package/id, and `DBT` remains the internal command/runtime short form.
 
 On current Codex, DBT-Agent is installed as one plugin inside Codex's generic local marketplace:
 

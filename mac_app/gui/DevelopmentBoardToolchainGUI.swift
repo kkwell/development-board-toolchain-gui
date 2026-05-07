@@ -58,6 +58,130 @@ private extension Color {
     }
 }
 
+enum AppLanguage: String, CaseIterable, Identifiable {
+    case zhHans = "zh-Hans"
+    case en = "en"
+
+    static let defaultsKey = "embedLabsGUI.language"
+
+    var id: String { rawValue }
+
+    var localeIdentifier: String { rawValue }
+
+    var resourceName: String { rawValue }
+
+    var menuTitle: String {
+        switch self {
+        case .zhHans:
+            return "中文"
+        case .en:
+            return "English"
+        }
+    }
+
+    var displayTitle: String {
+        switch self {
+        case .zhHans:
+            return "中文"
+        case .en:
+            return "English"
+        }
+    }
+
+    static var stored: AppLanguage {
+        if let raw = UserDefaults.standard.string(forKey: defaultsKey),
+           let language = AppLanguage(rawValue: raw) {
+            return language
+        }
+        return .zhHans
+    }
+}
+
+private struct AppLanguageEnvironmentKey: EnvironmentKey {
+    static let defaultValue: AppLanguage = .stored
+}
+
+private extension EnvironmentValues {
+    var appLanguage: AppLanguage {
+        get { self[AppLanguageEnvironmentKey.self] }
+        set { self[AppLanguageEnvironmentKey.self] = newValue }
+    }
+}
+
+private enum AppStrings {
+    static let productName = "Embed Labs"
+
+    static func productNormalized(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "Development Board Toolchain", with: productName)
+            .replacingOccurrences(of: "Development board toolchain", with: productName)
+            .replacingOccurrences(of: "development board toolchain", with: productName)
+    }
+
+    static func localized(_ key: String, language: AppLanguage = .stored) -> String {
+        let normalizedKey = productNormalized(key)
+        guard language == .en else {
+            return normalizedKey
+        }
+        guard let url = Bundle.main.url(forResource: language.resourceName, withExtension: "lproj"),
+              let bundle = Bundle(url: url) else {
+            return englishFallback(for: normalizedKey)
+        }
+        let translated = bundle.localizedString(forKey: key, value: nil, table: nil)
+        if translated != key {
+            return productNormalized(translated)
+        }
+        let normalizedTranslated = bundle.localizedString(forKey: normalizedKey, value: nil, table: nil)
+        if normalizedTranslated != normalizedKey {
+            return productNormalized(normalizedTranslated)
+        }
+        return englishFallback(for: normalizedKey)
+    }
+
+    static func englishFallback(for key: String) -> String {
+        var result = productNormalized(key)
+        let replacements: [(String, String)] = [
+            ("本地 DBT Agent", "Local Embed Labs Agent"),
+            ("DBT Agent", "Embed Labs Agent"),
+            ("开发板", "Board"),
+            ("控制服务", "Control Service"),
+            ("控制链路", "Control Link"),
+            ("编译环境", "Build Environment"),
+            ("初始镜像", "Factory Image"),
+            ("用户镜像", "User Image"),
+            ("刷写", "Flash"),
+            ("状态", "Status"),
+            ("设置", "Settings"),
+            ("软件更新", "Software Update"),
+            ("联系方式", "Contact"),
+            ("版本信息", "Version"),
+            ("等待", "Waiting"),
+            ("未连接", "Disconnected"),
+            ("已连接", "Connected"),
+            ("正常", "Normal"),
+            ("异常", "Abnormal"),
+            ("可用", "Available"),
+            ("不支持", "Unsupported"),
+            ("检查", "Check"),
+            ("安装", "Install"),
+            ("删除", "Remove"),
+            ("取消", "Cancel"),
+            ("关闭", "Close"),
+            ("确认", "Confirm"),
+            ("打开", "Open"),
+            ("复制", "Copy"),
+            ("完成", "Completed"),
+            ("失败", "Failed"),
+            ("中文", "Chinese"),
+            ("英文", "English"),
+        ]
+        for (source, target) in replacements {
+            result = result.replacingOccurrences(of: source, with: target)
+        }
+        return result
+    }
+}
+
 struct ToolkitStatus: Decodable {
     struct Service: Decodable {
         let host: String?
@@ -1768,6 +1892,7 @@ final class ToolkitViewModel: ObservableObject {
     @Published var updaterLastDetail = "等待检查"
     @Published var actionAvailability: [ActionPrecondition: ActionAvailabilityState] = [:]
     @Published var automaticToolkitUpdateInProgress = false
+    @Published var appLanguage: AppLanguage = .stored
     @Published var postFlashRecoveryActive = false
     @Published var postFlashRecoveryFinished = false
     @Published var postFlashRecoverySucceeded = false
@@ -7145,7 +7270,7 @@ final class ToolkitViewModel: ObservableObject {
         }
         lastBackgroundStatusNotificationMessage = message
         lastBackgroundStatusNotificationAt = now
-        sendUserNotification(title: "DBT-Agent", message: message)
+        sendUserNotification(title: AppStrings.productName, message: message)
     }
 
     func runManagedAction(
@@ -9918,7 +10043,20 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     var productDisplayName: String {
-        "Development Board Toolchain"
+        AppStrings.productName
+    }
+
+    func setAppLanguage(_ language: AppLanguage) {
+        guard appLanguage != language else {
+            return
+        }
+        appLanguage = language
+        UserDefaults.standard.set(language.rawValue, forKey: AppLanguage.defaultsKey)
+        appendActivity(
+            level: .info,
+            title: AppStrings.localized("设置", language: language),
+            message: AppStrings.localized("语言已切换为 \(language.displayTitle)", language: language)
+        )
     }
 
     var supportedBoards: [SupportedBoard] {
@@ -10649,6 +10787,7 @@ final class ToolkitViewModel: ObservableObject {
 }
 
 struct StatusCard: View {
+    @Environment(\.appLanguage) private var appLanguage
     let title: String
     let value: String
     let ok: Bool
@@ -10741,7 +10880,7 @@ struct StatusCard: View {
         systemImage: String
     ) -> some View {
         HStack(spacing: 4) {
-            Text(text)
+            Text(AppStrings.localized(text, language: appLanguage))
                 .lineLimit(1)
             Image(systemName: systemImage)
                 .font(.system(size: 8, weight: .bold))
@@ -10765,14 +10904,14 @@ struct StatusCard: View {
                 Image(systemName: symbol)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(statusTint)
-                Text(title)
+                Text(AppStrings.localized(title, language: appLanguage))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 trailingIndicator
             }
-            Text(value)
+            Text(AppStrings.localized(value, language: appLanguage))
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
@@ -10810,7 +10949,7 @@ struct StatusCard: View {
             .animation(.easeOut(duration: 0.16), value: hovering)
         }
         .buttonStyle(.plain)
-        .help(helpText ?? value)
+        .help(AppStrings.localized(helpText ?? value, language: appLanguage))
         .onHover { inside in
             hovering = inside
         }
@@ -10818,6 +10957,7 @@ struct StatusCard: View {
 }
 
 struct ActionTile: View {
+    @Environment(\.appLanguage) private var appLanguage
     let title: String
     let subtitle: String
     let enabled: Bool
@@ -10855,7 +10995,7 @@ struct ActionTile: View {
                     Image(systemName: symbol)
                         .font(.system(size: compact ? 12 : 14, weight: .semibold))
                         .foregroundStyle(enabled ? Color.accentColor : Color.secondary)
-                    Text(title)
+                    Text(AppStrings.localized(title, language: appLanguage))
                         .font((compact ? Font.system(size: 12, weight: .semibold) : .subheadline.weight(.semibold)))
                         .lineLimit(1)
                         .foregroundStyle(enabled ? Color.primary : Color.secondary)
@@ -10868,12 +11008,12 @@ struct ActionTile: View {
                     }
                 }
                 if !compact {
-                    Text(subtitle)
+                    Text(AppStrings.localized(subtitle, language: appLanguage))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)
                     if let disabledReason, !enabled {
-                        Text(disabledReason)
+                        Text(AppStrings.localized(disabledReason, language: appLanguage))
                             .font(.caption2)
                             .foregroundStyle(.orange)
                             .multilineTextAlignment(.leading)
@@ -10896,7 +11036,7 @@ struct ActionTile: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .help(disabledReason ?? helpText ?? subtitle)
+        .help(AppStrings.localized(disabledReason ?? helpText ?? subtitle, language: appLanguage))
         .onHover { hovering in
             self.hovering = hovering
         }
@@ -10921,6 +11061,7 @@ struct ActionTile: View {
 }
 
 struct ActivityRow: View {
+    @Environment(\.appLanguage) private var appLanguage
     let entry: ActivityEntry
     let onDetail: () -> Void
 
@@ -10930,17 +11071,17 @@ struct ActivityRow: View {
                 .foregroundStyle(entry.level.color)
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(entry.title)
+                    Text(AppStrings.localized(entry.title, language: appLanguage))
                         .font(.headline)
                     Spacer()
                     Text(entry.timestamp.formatted(date: .omitted, time: .standard))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text(entry.message)
+                Text(AppStrings.localized(entry.message, language: appLanguage))
                     .font(.subheadline)
                 if entry.detail != nil {
-                    Button("查看详情", action: onDetail)
+                    Button(AppStrings.localized("查看详情", language: appLanguage), action: onDetail)
                         .buttonStyle(.link)
                         .padding(.top, 2)
                 }
@@ -12374,6 +12515,7 @@ struct RP2350MonitorWiFiUSBConfigPanel: View {
 }
 
 struct MonitorField: View {
+    @Environment(\.appLanguage) private var appLanguage
     let title: String
     @Binding var text: String
     let width: CGFloat
@@ -12386,10 +12528,10 @@ struct MonitorField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title)
+            Text(AppStrings.localized(title, language: appLanguage))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            TextField(title, text: $text)
+            TextField(AppStrings.localized(title, language: appLanguage), text: $text)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.caption, design: .monospaced))
                 .frame(width: width)
@@ -12398,6 +12540,7 @@ struct MonitorField: View {
 }
 
 struct MonitorSecureField: View {
+    @Environment(\.appLanguage) private var appLanguage
     let title: String
     @Binding var text: String
     let width: CGFloat
@@ -12410,10 +12553,10 @@ struct MonitorSecureField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title)
+            Text(AppStrings.localized(title, language: appLanguage))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            SecureField(title, text: $text)
+            SecureField(AppStrings.localized(title, language: appLanguage), text: $text)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.caption, design: .rounded))
                 .frame(width: width)
@@ -12422,6 +12565,7 @@ struct MonitorSecureField: View {
 }
 
 struct CompactMonitorButton: View {
+    @Environment(\.appLanguage) private var appLanguage
     let title: String
     let systemImage: String
     let enabled: Bool
@@ -12436,7 +12580,7 @@ struct CompactMonitorButton: View {
 
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
+            Label(AppStrings.localized(title, language: appLanguage), systemImage: systemImage)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
                 .padding(.horizontal, 8)
@@ -12596,6 +12740,7 @@ enum RP2350MonitorLogFormatter {
 }
 
 struct InstallStatusRow: View {
+    @Environment(\.appLanguage) private var appLanguage
     let title: String
     let detail: String
     let ok: Bool
@@ -12605,9 +12750,9 @@ struct InstallStatusRow: View {
             Image(systemName: ok ? "checkmark.circle.fill" : "circle.dashed")
                 .foregroundStyle(ok ? .green : .secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(AppStrings.localized(title, language: appLanguage))
                     .font(.subheadline.weight(.semibold))
-                Text(detail)
+                Text(AppStrings.localized(detail, language: appLanguage))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -12621,6 +12766,7 @@ struct InstallStatusRow: View {
 }
 
 struct ReleaseHeroCard: View {
+    @Environment(\.appLanguage) private var appLanguage
     let symbol: String
     let title: String
     let subtitle: String
@@ -12638,14 +12784,14 @@ struct ReleaseHeroCard: View {
                     .foregroundStyle(badgeColor)
             }
             VStack(alignment: .leading, spacing: 5) {
-                Text(title)
+                Text(AppStrings.localized(title, language: appLanguage))
                     .font(.title3.weight(.semibold))
-                Text(subtitle)
+                Text(AppStrings.localized(subtitle, language: appLanguage))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(badgeText)
+            Text(AppStrings.localized(badgeText, language: appLanguage))
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -12706,6 +12852,7 @@ struct HoverFlipActionCard<Front: View, Back: View>: View {
 }
 
 struct ReleaseStateCard: View {
+    @Environment(\.appLanguage) private var appLanguage
     let title: String
     let detail: String
     let ok: Bool
@@ -12781,7 +12928,7 @@ struct ReleaseStateCard: View {
     @ViewBuilder
     private var actionButton: some View {
         if let actionTitle, let action {
-            Button(actionTitle, action: action)
+            Button(AppStrings.localized(actionTitle, language: appLanguage), action: action)
                 .buttonStyle(.plain)
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, actionEmphasized ? 12 : 0)
@@ -12799,13 +12946,13 @@ struct ReleaseStateCard: View {
                 HStack(spacing: 8) {
                     Image(systemName: ok ? "checkmark.circle.fill" : "clock.badge.exclamationmark")
                         .foregroundStyle(tint)
-                    Text(title)
+                    Text(AppStrings.localized(title, language: appLanguage))
                         .font(.subheadline.weight(.semibold))
                 }
                 Spacer()
                 actionButton
             }
-            Text(detail)
+            Text(AppStrings.localized(detail, language: appLanguage))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -12815,11 +12962,12 @@ struct ReleaseStateCard: View {
         .frame(maxWidth: .infinity, minHeight: 64, maxHeight: 64, alignment: .leading)
         .background(Color.primary.opacity(0.045))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .help(helpText ?? detail)
+        .help(AppStrings.localized(helpText ?? detail, language: appLanguage))
     }
 }
 
 struct DevelopmentModeSwitchCard: View {
+    @Environment(\.appLanguage) private var appLanguage
     let title: String
     let subtitle: String
     let statusText: String
@@ -12836,17 +12984,17 @@ struct DevelopmentModeSwitchCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top, spacing: 10) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(title)
+                        Text(AppStrings.localized(title, language: appLanguage))
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.primary)
-                        Text(subtitle)
+                        Text(AppStrings.localized(subtitle, language: appLanguage))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 10)
                     if selected {
-                        Text("当前")
+                        Text(AppStrings.localized("当前", language: appLanguage))
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
@@ -12859,7 +13007,7 @@ struct DevelopmentModeSwitchCard: View {
                 HStack(spacing: 8) {
                     Image(systemName: ok ? "checkmark.circle.fill" : "clock.badge.exclamationmark")
                         .foregroundStyle(tint)
-                    Text(statusText)
+                    Text(AppStrings.localized(statusText, language: appLanguage))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)
@@ -12880,6 +13028,7 @@ struct DevelopmentModeSwitchCard: View {
 }
 
 struct ArtifactValidationRow: View {
+    @Environment(\.appLanguage) private var appLanguage
     let item: LocalArtifactValidationItem
 
     var tint: Color {
@@ -12902,10 +13051,10 @@ struct ArtifactValidationRow: View {
                 .foregroundStyle(tint)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(item.title)
+                    Text(AppStrings.localized(item.title, language: appLanguage))
                         .font(.subheadline.weight(.semibold))
                     if item.optional {
-                        Text("可选")
+                        Text(AppStrings.localized("可选", language: appLanguage))
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -12914,7 +13063,7 @@ struct ArtifactValidationRow: View {
                             .clipShape(Capsule())
                     }
                 }
-                Text(item.detail)
+                Text(AppStrings.localized(item.detail, language: appLanguage))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -12926,11 +13075,12 @@ struct ArtifactValidationRow: View {
         .padding(.vertical, 8)
         .background(Color.primary.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .help(item.detail)
+        .help(AppStrings.localized(item.detail, language: appLanguage))
     }
 }
 
 struct InstallerPrimaryActionCard: View {
+    @Environment(\.appLanguage) private var appLanguage
     let title: String
     let subtitle: String
     let primaryTitle: String
@@ -12940,17 +13090,17 @@ struct InstallerPrimaryActionCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(title)
+            Text(AppStrings.localized(title, language: appLanguage))
                 .font(.headline)
-            Text(subtitle)
+            Text(AppStrings.localized(subtitle, language: appLanguage))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 10) {
-                Button(primaryTitle, action: primaryAction)
+                Button(AppStrings.localized(primaryTitle, language: appLanguage), action: primaryAction)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                Button(secondaryTitle, action: secondaryAction)
+                Button(AppStrings.localized(secondaryTitle, language: appLanguage), action: secondaryAction)
                     .controlSize(.large)
             }
         }
@@ -12962,6 +13112,7 @@ struct InstallerPrimaryActionCard: View {
 }
 
 struct InstallerOfflineCard: View {
+    @Environment(\.appLanguage) private var appLanguage
     let title: String
     let subtitle: String
     let requirementText: String
@@ -12986,14 +13137,14 @@ struct InstallerOfflineCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title)
+            Text(AppStrings.localized(title, language: appLanguage))
                 .font(.headline)
-            Text(subtitle)
+            Text(AppStrings.localized(subtitle, language: appLanguage))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 10) {
-                Text(path.isEmpty ? "未选择本地安装包目录" : path)
+                Text(path.isEmpty ? AppStrings.localized("未选择本地安装包目录", language: appLanguage) : path)
                     .font(.caption)
                     .foregroundStyle(path.isEmpty ? .secondary : .primary)
                     .lineLimit(1)
@@ -13003,15 +13154,15 @@ struct InstallerOfflineCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.toolkitInputBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                Button("选择目录", action: chooseAction)
+                Button(AppStrings.localized("选择目录", language: appLanguage), action: chooseAction)
                     .controlSize(.large)
             }
 
             HStack(spacing: 10) {
-                Button("从本地文件安装", action: installAction)
+                Button(AppStrings.localized("从本地文件安装", language: appLanguage), action: installAction)
                     .controlSize(.large)
                     .disabled(!validation.ready)
-                Text(requirementText)
+                Text(AppStrings.localized(requirementText, language: appLanguage))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -13020,13 +13171,13 @@ struct InstallerOfflineCard: View {
             HStack(spacing: 10) {
                 Image(systemName: validation.ready ? "checkmark.seal.fill" : (validation.checked ? "exclamationmark.triangle.fill" : "folder.badge.questionmark"))
                     .foregroundStyle(summaryColor)
-                Text(validation.summary)
+                Text(AppStrings.localized(validation.summary, language: appLanguage))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(summaryColor)
                     .lineLimit(2)
                 Spacer()
                 if validation.checked && !validation.ready && !validation.failureDetail.isEmpty {
-                    Button("查看详情", action: detailAction)
+                    Button(AppStrings.localized("查看详情", language: appLanguage), action: detailAction)
                         .controlSize(.small)
                 }
                 if validation.checking {
@@ -13047,6 +13198,7 @@ struct InstallerOfflineCard: View {
 }
 
 struct ReleaseLogConsole: View {
+    @Environment(\.appLanguage) private var appLanguage
     let title: String
     let statusText: String
     let running: Bool
@@ -13063,9 +13215,9 @@ struct ReleaseLogConsole: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
+                    Text(AppStrings.localized(title, language: appLanguage))
                         .font(.headline)
-                    Text(statusText.isEmpty ? "等待操作" : statusText)
+                    Text(AppStrings.localized(statusText.isEmpty ? "等待操作" : statusText, language: appLanguage))
                         .font(.system(.subheadline, design: .monospaced).weight(.semibold))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -13159,9 +13311,9 @@ enum ToolkitInfoPage {
     var windowTitle: String {
         switch self {
         case .version:
-            return "版本信息"
+            return AppStrings.localized("版本信息")
         case .contact:
-            return "联系方式"
+            return AppStrings.localized("联系方式")
         }
     }
 
@@ -13186,18 +13338,18 @@ enum ToolkitInfoPage {
     var heroTitle: String {
         switch self {
         case .version:
-            return "Development Board Toolchain"
+            return AppStrings.productName
         case .contact:
-            return "联系方式"
+            return AppStrings.localized("联系方式")
         }
     }
 
     var heroSubtitle: String {
         switch self {
         case .version:
-            return "用于连接、刷写、发布与维护开发板的 macOS 常驻工具。"
+            return AppStrings.localized("用于连接、刷写、发布与维护开发板的 macOS 常驻工具。")
         case .contact:
-            return "用于问题反馈、功能建议和维护支持的统一入口。欢迎通过邮箱联系，也可以通过下方二维码支持后续迭代。"
+            return AppStrings.localized("用于问题反馈、功能建议和维护支持的统一入口。欢迎通过邮箱联系，也可以通过下方二维码支持后续迭代。")
         }
     }
 
@@ -13206,7 +13358,7 @@ enum ToolkitInfoPage {
         case let .version(appVersion, buildVersion):
             return "v\(appVersion) · build \(buildVersion)"
         case .contact:
-            return "反馈与支持"
+            return AppStrings.localized("反馈与支持")
         }
     }
 
@@ -13215,7 +13367,7 @@ enum ToolkitInfoPage {
         case .version:
             return ""
         case .contact:
-            return "感谢支持 Development Board Toolchain。你的反馈和捐献都会直接用于后续维护、适配和体验优化。"
+            return AppStrings.localized("感谢支持 Embed Labs。你的反馈和捐献都会直接用于后续维护、适配和体验优化。")
         }
     }
 
@@ -13235,26 +13387,26 @@ enum ToolkitInfoPage {
         case .contact:
             return [
                 ToolkitInfoSectionData(
-                    eyebrow: "联系作者",
-                    title: "问题反馈与功能建议",
-                    summary: "如果你在安装、刷写、联机调试或版本升级过程中遇到问题，或者希望补充新功能，可以直接通过邮箱联系。",
+                    eyebrow: AppStrings.localized("联系作者"),
+                    title: AppStrings.localized("问题反馈与功能建议"),
+                    summary: AppStrings.localized("如果你在安装、刷写、联机调试或版本升级过程中遇到问题，或者希望补充新功能，可以直接通过邮箱联系。"),
                     rows: [
                         ToolkitInfoRowData(
                             symbol: "envelope.badge.fill",
-                            title: "联系邮箱",
+                            title: AppStrings.localized("联系邮箱"),
                             detail: "kong_w@foxmail.com",
                             tint: accentColor
                         ),
                         ToolkitInfoRowData(
                             symbol: "bubble.left.and.bubble.right.fill",
-                            title: "反馈内容建议",
-                            detail: "建议附上当前版本、操作步骤、异常截图和日志信息，这样可以更快定位问题。",
+                            title: AppStrings.localized("反馈内容建议"),
+                            detail: AppStrings.localized("建议附上当前版本、操作步骤、异常截图和日志信息，这样可以更快定位问题。"),
                             tint: Color.blue
                         ),
                         ToolkitInfoRowData(
                             symbol: "hammer.circle.fill",
-                            title: "维护支持",
-                            detail: "如果这套工具对你的开发或交付流程有帮助，可以通过下方二维码支持后续维护与优化。",
+                            title: AppStrings.localized("维护支持"),
+                            detail: AppStrings.localized("如果这套工具对你的开发或交付流程有帮助，可以通过下方二维码支持后续维护与优化。"),
                             tint: Color.green
                         ),
                     ]
@@ -14267,6 +14419,8 @@ struct DevelopmentInstallWindowView: View {
     var body: some View {
         DevelopmentInstallPanelView(vm: vm, board: nil, embedded: false)
             .frame(minWidth: 820, minHeight: 660)
+            .environment(\.locale, Locale(identifier: vm.appLanguage.localeIdentifier))
+            .environment(\.appLanguage, vm.appLanguage)
             .background(
                 WindowAccessor { window in
                     hostWindow = window
@@ -14317,30 +14471,30 @@ struct ToolkitUpdateWindowView: View {
 
     var displayText: String {
         if updateFlowRunning {
-            return statusText.isEmpty ? "正在联网检查更新..." : statusText
+            return statusText.isEmpty ? AppStrings.localized("正在联网检查更新...", language: vm.appLanguage) : statusText
         }
         if !vm.updateConfigured {
-            return "未配置远程更新地址"
+            return AppStrings.localized("未配置远程更新地址", language: vm.appLanguage)
         }
         if vm.toolkitUpdateStatus.updateAvailable {
-            return "发现新版本 \(vm.toolkitUpdateStatus.remoteVersion)"
+            return "\(AppStrings.localized("发现新版本", language: vm.appLanguage)) \(vm.toolkitUpdateStatus.remoteVersion)"
         }
         if !vm.toolkitUpdateStatus.remoteVersion.isEmpty {
-            return "当前版本 \(vm.toolkitUpdateStatus.currentVersion)，已是最新版本"
+            return "\(AppStrings.localized("当前版本", language: vm.appLanguage)) \(vm.toolkitUpdateStatus.currentVersion), \(AppStrings.localized("已是最新版本", language: vm.appLanguage))"
         }
-        return "等待检查更新"
+        return AppStrings.localized("等待检查更新", language: vm.appLanguage)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Development Board Toolchain 软件更新")
+                Text(AppStrings.productName + " " + AppStrings.localized("软件更新", language: vm.appLanguage))
                     .font(.headline)
                 HStack(spacing: 16) {
-                    Label("当前版本 \(vm.toolkitUpdateStatus.currentVersion)", systemImage: "app.badge")
+                    Label("\(AppStrings.localized("当前版本", language: vm.appLanguage)) \(vm.toolkitUpdateStatus.currentVersion)", systemImage: "app.badge")
                         .foregroundStyle(.secondary)
                     if !vm.toolkitUpdateStatus.remoteVersion.isEmpty {
-                        Label("远端版本 \(vm.toolkitUpdateStatus.remoteVersion)", systemImage: "icloud.and.arrow.down")
+                        Label("\(AppStrings.localized("远端版本", language: vm.appLanguage)) \(vm.toolkitUpdateStatus.remoteVersion)", systemImage: "icloud.and.arrow.down")
                             .foregroundStyle(vm.toolkitUpdateStatus.updateAvailable ? Color.accentColor : .secondary)
                     }
                 }
@@ -14359,13 +14513,13 @@ struct ToolkitUpdateWindowView: View {
             }
 
             HStack(spacing: 10) {
-                Button("检查更新") {
+                Button(AppStrings.localized("检查更新", language: vm.appLanguage)) {
                     vm.checkToolkitUpdate()
                 }
                 .buttonStyle(.bordered)
                 .disabled(updateFlowRunning)
 
-                Button("安装更新") {
+                Button(AppStrings.localized("安装更新", language: vm.appLanguage)) {
                     vm.performToolkitUpdate()
                 }
                 .buttonStyle(.borderedProminent)
@@ -14391,9 +14545,62 @@ struct ToolkitUpdateWindowView: View {
         .padding(.horizontal, 22)
         .padding(.vertical, 18)
         .frame(minWidth: 460, minHeight: 210)
+        .environment(\.locale, Locale(identifier: vm.appLanguage.localeIdentifier))
+        .environment(\.appLanguage, vm.appLanguage)
         .task {
             vm.checkToolkitUpdate()
         }
+    }
+}
+
+struct SettingsWindowView: View {
+    @ObservedObject var vm: ToolkitViewModel
+
+    private func localized(_ key: String) -> String {
+        AppStrings.localized(key, language: vm.appLanguage)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                ToolkitInfoLogoView(size: 52, cornerRadius: 12)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(AppStrings.productName)
+                        .font(.system(.title3, design: .rounded).weight(.bold))
+                    Text(localized("设置"))
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(localized("语言"))
+                    .font(.system(.headline, design: .rounded).weight(.semibold))
+                Picker(localized("语言"), selection: Binding(
+                    get: { vm.appLanguage },
+                    set: { vm.setAppLanguage($0) }
+                )) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(language.menuTitle).tag(language)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text(localized("切换后界面文本会立即更新，后台任务日志和来自设备的原始输出保持原文。"))
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(22)
+        .frame(minWidth: 440, minHeight: 220, alignment: .topLeading)
+        .background(Color.toolkitWindowBackground)
+        .environment(\.locale, Locale(identifier: vm.appLanguage.localeIdentifier))
+        .environment(\.appLanguage, vm.appLanguage)
     }
 }
 
@@ -17411,6 +17618,8 @@ struct ContentView: View {
                 boardCatalogViewID = UUID()
             }
         }
+        .environment(\.locale, Locale(identifier: vm.appLanguage.localeIdentifier))
+        .environment(\.appLanguage, vm.appLanguage)
     }
 
     private func presentRebootPrompt() {
@@ -17483,6 +17692,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private var developmentInstallWindowController: NSWindowController?
     private var developmentInstallWindowCloseGuard: WindowCloseGuard?
     private var updateWindowController: NSWindowController?
+    private var settingsWindowController: NSWindowController?
     private var cancellables = Set<AnyCancellable>()
     private var appearanceObserver: NSObjectProtocol?
     private var globalClickMonitor: Any?
@@ -17520,21 +17730,29 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     private func configureMenu() {
-        let versionItem = NSMenuItem(title: "版本信息", action: #selector(showVersionInfo), keyEquivalent: "")
+        contextMenu.removeAllItems()
+
+        let settingsItem = NSMenuItem(title: AppStrings.localized("设置", language: vm.appLanguage), action: #selector(showSettingsWindow), keyEquivalent: ",")
+        settingsItem.target = self
+        contextMenu.addItem(settingsItem)
+
+        contextMenu.addItem(.separator())
+
+        let versionItem = NSMenuItem(title: AppStrings.localized("版本信息", language: vm.appLanguage), action: #selector(showVersionInfo), keyEquivalent: "")
         versionItem.target = self
         contextMenu.addItem(versionItem)
 
-        let contactItem = NSMenuItem(title: "联系方式", action: #selector(showContactInfo), keyEquivalent: "")
+        let contactItem = NSMenuItem(title: AppStrings.localized("联系方式", language: vm.appLanguage), action: #selector(showContactInfo), keyEquivalent: "")
         contactItem.target = self
         contextMenu.addItem(contactItem)
 
-        let updateItem = NSMenuItem(title: "软件更新", action: #selector(showUpdateWindow), keyEquivalent: "")
+        let updateItem = NSMenuItem(title: AppStrings.localized("软件更新", language: vm.appLanguage), action: #selector(showUpdateWindow), keyEquivalent: "")
         updateItem.target = self
         contextMenu.addItem(updateItem)
 
         contextMenu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: AppStrings.localized("退出", language: vm.appLanguage), action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         contextMenu.addItem(quitItem)
     }
@@ -17563,6 +17781,16 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _, _ in
                 self?.updateStatusItemAppearance()
+            }
+            .store(in: &cancellables)
+
+        vm.$appLanguage
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.configureMenu()
+                self?.updateStatusItemAppearance()
+                self?.updateLocalizedWindowTitles()
             }
             .store(in: &cancellables)
 
@@ -17856,14 +18084,25 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         NSApplication.shared.terminate(nil)
     }
 
+    private func updateLocalizedWindowTitles() {
+        versionInfoWindowController?.window?.title = AppStrings.localized("版本信息", language: vm.appLanguage)
+        contactInfoWindowController?.window?.title = AppStrings.localized("联系方式", language: vm.appLanguage)
+        developmentInstallWindowController?.window?.title = AppStrings.localized("Embed Labs 开发环境", language: vm.appLanguage)
+        updateWindowController?.window?.title = AppStrings.localized("Embed Labs 软件更新", language: vm.appLanguage)
+        settingsWindowController?.window?.title = AppStrings.localized("设置", language: vm.appLanguage)
+    }
+
     private func showBoardModelWindow(_ board: SupportedBoard) {
-        let titleSuffix = boardModelOBJURL(for: board) == nil ? "外观视图" : "3D 视图"
+        let titleSuffixKey = boardModelOBJURL(for: board) == nil ? "外观视图" : "3D 视图"
+        let titleSuffix = AppStrings.localized(titleSuffixKey, language: vm.appLanguage)
         let rootView = BoardModelStandaloneWindowView(
             board: board,
             closeAction: { [weak self] in
                 self?.boardModelWindowController?.close()
             }
         )
+        .environment(\.locale, Locale(identifier: vm.appLanguage.localeIdentifier))
+        .environment(\.appLanguage, vm.appLanguage)
 
         if let controller = boardModelWindowController, let window = controller.window {
             window.title = "\(board.displayName) \(titleSuffix)"
@@ -17943,7 +18182,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         window.title = page.windowTitle
         window.center()
         window.setContentSize(preferredSize)
-        window.contentViewController = NSHostingController(rootView: ToolkitInfoWindowView(page: page))
+        window.contentViewController = NSHostingController(rootView: ToolkitInfoWindowView(page: page)
+            .environment(\.locale, Locale(identifier: vm.appLanguage.localeIdentifier))
+            .environment(\.appLanguage, vm.appLanguage))
 
         let controller = NSWindowController(window: window)
         switch page {
@@ -17985,6 +18226,47 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         presentInfoWindow(page: .contact)
     }
 
+    @objc private func showSettingsWindow() {
+        if let controller = settingsWindowController {
+            controller.showWindow(nil)
+            controller.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 220),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = AppStrings.localized("设置", language: vm.appLanguage)
+        window.center()
+        window.setContentSize(NSSize(width: 440, height: 220))
+        window.contentViewController = NSHostingController(rootView: SettingsWindowView(vm: vm)
+            .environment(\.locale, Locale(identifier: vm.appLanguage.localeIdentifier))
+            .environment(\.appLanguage, vm.appLanguage))
+
+        let controller = NSWindowController(window: window)
+        settingsWindowController = controller
+        controller.showWindow(nil)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self, weak window] _ in
+            Task { @MainActor [weak self, weak window] in
+                guard let self, window === self.settingsWindowController?.window else {
+                    return
+                }
+                self.settingsWindowController = nil
+            }
+        }
+    }
+
     @objc private func showDevelopmentInstallWindow() {
         if let controller = developmentInstallWindowController {
             controller.showWindow(nil)
@@ -18000,7 +18282,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Development Board Toolchain 开发环境"
+        window.title = AppStrings.localized("Embed Labs 开发环境", language: vm.appLanguage)
         window.center()
         window.setContentSize(NSSize(width: 820, height: 660))
         let closeGuard = WindowCloseGuard { [weak vm] in
@@ -18017,7 +18299,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         }
         developmentInstallWindowCloseGuard = closeGuard
         window.delegate = closeGuard
-        window.contentViewController = NSHostingController(rootView: DevelopmentInstallWindowView(vm: vm))
+        window.contentViewController = NSHostingController(rootView: DevelopmentInstallWindowView(vm: vm)
+            .environment(\.locale, Locale(identifier: vm.appLanguage.localeIdentifier))
+            .environment(\.appLanguage, vm.appLanguage))
 
         let controller = NSWindowController(window: window)
         developmentInstallWindowController = controller
@@ -18062,10 +18346,12 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Development Board Toolchain 软件更新"
+        window.title = AppStrings.localized("Embed Labs 软件更新", language: vm.appLanguage)
         window.center()
         window.setContentSize(NSSize(width: 420, height: 170))
-        window.contentViewController = NSHostingController(rootView: ToolkitUpdateWindowView(vm: vm))
+        window.contentViewController = NSHostingController(rootView: ToolkitUpdateWindowView(vm: vm)
+            .environment(\.locale, Locale(identifier: vm.appLanguage.localeIdentifier))
+            .environment(\.appLanguage, vm.appLanguage))
 
         let controller = NSWindowController(window: window)
         updateWindowController = controller

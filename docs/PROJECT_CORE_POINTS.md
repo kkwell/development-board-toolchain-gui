@@ -3,7 +3,8 @@
 ## Product Identity
 
 - Application bundle name: `DBT-Agent.app`
-- In-app visible title: `Development Board Toolchain`
+- In-app visible title: `Embed Labs`
+- macOS display name: `Embed Labs`
 - Product role: local macOS menu bar GUI for development-board workflows
 
 ## Scope Of This Repository

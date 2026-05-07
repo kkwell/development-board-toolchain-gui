@@ -182,7 +182,7 @@ Primary control-plane docs:
 
 ## Codex Plugin Rules
 
-`DBT-Agent` is the Codex-facing name for `Development Board Toolchain`.
+`Embed Labs` is the user-facing product name for the GUI and plugin marketplace display. `DBT-Agent` remains the compatibility-facing app bundle/archive name and plugin id namespace.
 
 Codex must use the same shared support-root runtime and local agent as GUI and OpenCode.
 
@@ -212,7 +212,7 @@ Obsolete path:
 
 Rules:
 
-- the installed Codex plugin id is `dbt-agent`, and the UI display name is `DBT-Agent`
+- the installed Codex plugin id is `dbt-agent`, and the UI display name is `Embed Labs`
 - the installed Codex plugin is a thin wrapper only; its `.mcp.json` must point to the shared runtime script under `runtime/editor_plugins/codex/scripts/dbt_agent_mcp.py`
 - GUI, OpenCode, and Codex must all operate through the same support-root runtime and local `dbt-agentd`
 - Codex plugin tools must stay compact and model-facing

@@ -5,7 +5,8 @@ This document records the current local development baseline that was verified b
 ## App Identity
 
 - bundle name: `DBT-Agent.app`
-- in-app title: `Development Board Toolchain`
+- current in-app title: `Embed Labs`
+- the previous long-form toolkit title has been replaced in the visible GUI
 
 ## Verified Boards
 
