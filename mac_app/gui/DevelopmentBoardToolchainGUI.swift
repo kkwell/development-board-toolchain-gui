@@ -204,11 +204,27 @@ private enum AppStrings {
             ("设备已断开", "Device Disconnected"),
             ("等待识别", "Waiting for Detection"),
             ("当前激活设备", "Active Device"),
+            ("当前激活控制设备", "Active Control Device"),
             ("当前在线", "Online"),
             ("设备未连接", "Device Disconnected"),
+            ("单 USB 状态", "Single USB Status"),
+            ("单 USB 连接", "Single USB Connection"),
+            ("RP2350 单 USB", "RP2350 Single USB"),
+            ("串口序列号", "Serial Number"),
+            ("串口", "Serial Port"),
+            ("运行态", "Runtime"),
+            ("等待检测", "Waiting for"),
+            ("等待连接", "Waiting for Connection"),
+            ("选择设备", "Choose Device"),
+            ("厂家", "Vendor"),
+            ("连接", "Connection"),
+            ("接口", "Interface"),
+            ("位置", "Location"),
+            ("设备 ID", "Device ID"),
             ("当前", "Current"),
             ("台", "device(s)"),
             ("在线", "Online"),
+            ("泰山派", "TaishanPi"),
             ("嘉立创", "JLC"),
             ("本地 DBT Agent", "Local Embed Labs Agent"),
             ("DBT Agent", "Embed Labs Agent"),
@@ -11529,6 +11545,7 @@ struct FlashTab: View {
 struct ColorEasyPICO2OverviewTab: View {
     @ObservedObject var vm: ToolkitViewModel
     let board: SupportedBoard
+    @Environment(\.appLanguage) private var appLanguage
     private let statusColumns = [
         GridItem(.flexible(), spacing: 6),
         GridItem(.flexible(), spacing: 6),
@@ -11538,6 +11555,10 @@ struct ColorEasyPICO2OverviewTab: View {
     private let actionColumns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
 
     private var context: RP2350BoardStatusContext { vm.rp2350StatusContext(for: board) }
+
+    private func localized(_ key: String) -> String {
+        AppStrings.localized(key, language: appLanguage)
+    }
 
     private var bootselReady: Bool {
         context.stateLabel == "BOOTSEL"
@@ -11589,12 +11610,12 @@ struct ColorEasyPICO2OverviewTab: View {
                 StatusCard(title: "DBT Agent", value: vm.localAgentRunning ? "在线" : "离线", ok: vm.localAgentRunning, symbol: "switch.2")
             }
 
-            GroupBox("单 USB 状态") {
+            GroupBox(localized("单 USB 状态")) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(context.summary)
+                    Text(localized(context.summary))
                         .font(.system(.subheadline, design: .rounded))
                     if let serial = vm.status?.rp2350?.runtime_port?.serial_number, !serial.isEmpty {
-                        Text("串口序列号：\(serial)")
+                        Text("\(localized("串口序列号")): \(serial)")
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
@@ -16871,6 +16892,11 @@ struct DetectedDeviceSelectionOverlay: View {
 struct RP2350FlashTargetOverlay: View {
     @ObservedObject var vm: ToolkitViewModel
     let prompt: RP2350FlashTargetPrompt
+    @Environment(\.appLanguage) private var appLanguage
+
+    private func localized(_ key: String) -> String {
+        AppStrings.localized(key, language: appLanguage)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -16893,12 +16919,12 @@ struct RP2350FlashTargetOverlay: View {
                 ForEach(prompt.candidates) { candidate in
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(vm.activeControlDisplayLabel(for: candidate))
+                            Text(localized(vm.activeControlDisplayLabel(for: candidate)))
                                 .font(.system(.headline, design: .rounded).weight(.semibold))
-                            Text("\(candidate.interfaceName) · \(candidate.transportName)")
+                            Text("\(localized(candidate.interfaceName)) · \(localized(candidate.transportName))")
                                 .font(.system(.caption, design: .rounded))
                                 .foregroundStyle(.secondary)
-                            Text(candidate.sourceName)
+                            Text(localized(candidate.sourceName))
                                 .font(.system(.caption2, design: .rounded))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -16929,6 +16955,7 @@ struct RP2350FlashTargetOverlay: View {
 
 struct DisconnectedBoardHubView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appLanguage) private var appLanguage
     @ObservedObject var vm: ToolkitViewModel
     @Binding var detailBoard: SupportedBoard?
     @Binding var hideOuterHero: Bool
@@ -16977,6 +17004,13 @@ struct DisconnectedBoardHubView: View {
         return vm.supportedBoards.first(where: { $0.id == selectedBoardID })
     }
 
+    private var supportedBoardCountText: String {
+        if appLanguage == .en {
+            return "\(vm.supportedBoards.count) boards total"
+        }
+        return "共 \(vm.supportedBoards.count) 种开发板"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !(detailBoard != nil && hideOuterHero) {
@@ -17007,7 +17041,7 @@ struct DisconnectedBoardHubView: View {
                         Task { await vm.syncBoardPluginCatalog(force: true) }
                     }
                     Spacer()
-                    Text("共 \(vm.supportedBoards.count) 种开发板")
+                    Text(supportedBoardCountText)
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
@@ -17128,6 +17162,11 @@ struct ConnectedBoardPlaceholderView: View {
     @ObservedObject var vm: ToolkitViewModel
     let board: SupportedBoard
     let showDetachedModel: (SupportedBoard) -> Void
+    @Environment(\.appLanguage) private var appLanguage
+
+    private func localized(_ key: String) -> String {
+        AppStrings.localized(key, language: appLanguage)
+    }
 
     var body: some View {
         ScrollView {
@@ -17136,11 +17175,11 @@ struct ConnectedBoardPlaceholderView: View {
                     showDetachedModel(board)
                 })
 
-                GroupBox(isRP2350BoardID(board.id) ? "单 USB 连接" : "当前连接") {
+                GroupBox(localized(isRP2350BoardID(board.id) ? "单 USB 连接" : "当前连接")) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Label(vm.controlPageBoardTitle, systemImage: "cpu.fill")
+                        Label(localized(vm.controlPageBoardTitle), systemImage: "cpu.fill")
                             .font(.system(.headline, design: .rounded).weight(.semibold))
-                        Text("\(vm.deviceConnectionText) · \(vm.deviceReachabilityText)")
+                        Text("\(localized(vm.deviceConnectionText)) · \(localized(vm.deviceReachabilityText))")
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
@@ -17165,7 +17204,7 @@ struct ConnectedBoardPlaceholderView: View {
                 }
 
                 GroupBox("接入状态") {
-                    Text(board.integrationStatus)
+                    Text(localized(board.integrationStatus))
                         .font(.system(.subheadline, design: .rounded))
                         .foregroundStyle(.secondary)
                         .padding(.top, 6)
@@ -17187,6 +17226,7 @@ struct ConnectedBoardDashboardView: View {
     @Binding var selectedTab: Int
     let showDetachedModel: (SupportedBoard) -> Void
     let requestRebootDevice: () -> Void
+    @Environment(\.appLanguage) private var appLanguage
     @State private var showingDeviceSelector = false
     @State private var hoveredDeviceCandidateID: String?
 
@@ -17195,6 +17235,10 @@ struct ConnectedBoardDashboardView: View {
             return vm.activeControlDeviceCandidates.first(where: { $0.id == hoveredDeviceCandidateID })
         }
         return vm.currentControlCandidate
+    }
+
+    private func localized(_ key: String) -> String {
+        AppStrings.localized(key, language: appLanguage)
     }
 
     var body: some View {
@@ -17243,7 +17287,7 @@ struct ConnectedBoardDashboardView: View {
                         showingDeviceSelector.toggle()
                     } label: {
                         HStack(spacing: 8) {
-                            Text(vm.activeControlDeviceMenuLabel)
+                            Text(localized(vm.activeControlDeviceMenuLabel))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Image(systemName: "chevron.down")
@@ -17263,7 +17307,7 @@ struct ConnectedBoardDashboardView: View {
                         arrowEdge: .top
                     ) {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("当前激活控制设备")
+                            Text(localized("当前激活控制设备"))
                                 .font(.system(.caption, design: .rounded).weight(.semibold))
                                 .foregroundStyle(.secondary)
 
@@ -17276,10 +17320,10 @@ struct ConnectedBoardDashboardView: View {
                                     } label: {
                                         HStack(alignment: .center, spacing: 10) {
                                             VStack(alignment: .leading, spacing: 2) {
-                                                Text(vm.activeControlDisplayLabel(for: candidate))
+                                                Text(localized(vm.activeControlDisplayLabel(for: candidate)))
                                                     .font(.system(.subheadline, design: .rounded).weight(.semibold))
                                                     .foregroundStyle(.primary)
-                                                Text(candidate.transportName)
+                                                Text(localized(candidate.transportName))
                                                     .font(.system(.caption, design: .rounded))
                                                     .foregroundStyle(.secondary)
                                             }
@@ -17296,7 +17340,7 @@ struct ConnectedBoardDashboardView: View {
                                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                     }
                                     .buttonStyle(.plain)
-                                    .help(vm.activeControlTooltip(for: candidate))
+                                    .help(localized(vm.activeControlTooltip(for: candidate)))
                                     .onHover { hovering in
                                         if hovering {
                                             hoveredDeviceCandidateID = candidate.id
@@ -17309,7 +17353,7 @@ struct ConnectedBoardDashboardView: View {
 
                             Divider()
 
-                            Text(hoveredDeviceCandidate.map(vm.activeControlTooltip(for:)) ?? "选择用于当前控制页的设备")
+                            Text(localized(hoveredDeviceCandidate.map(vm.activeControlTooltip(for:)) ?? "选择用于当前控制页的设备"))
                                 .font(.system(.caption, design: .rounded))
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -17321,7 +17365,7 @@ struct ConnectedBoardDashboardView: View {
                     .frame(maxWidth: 340, alignment: .trailing)
                 }
 
-                Text(vm.localAgentRunning ? "DBT Agent 在线" : "DBT Agent 离线")
+                Text(localized(vm.localAgentRunning ? "DBT Agent 在线" : "DBT Agent 离线"))
                     .font(.caption)
                     .foregroundStyle(vm.localAgentRunning ? .green : .secondary)
                 if vm.controlPageIsTaishanPi {

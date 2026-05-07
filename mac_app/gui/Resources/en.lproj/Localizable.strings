@@ -272,7 +272,7 @@
 "全部" = "All";
 "全部 JSONL 数据" = "All JSONL data";
 "全量安装任务已提交" = "Full Setup Task Submitted";
-"共 \\(vm.supportedBoards.count) 种开发板" = "A total of 0 development boards\nof DBTPLACEHOLDER";
+"共 \\(vm.supportedBoards.count) 种开发板" = "Supported boards total";
 "共享镜像包" = "Shared image package";
 "关闭" = "Close";
 "内存：2GB" = "Memory: 2GB";
@@ -334,8 +334,8 @@
 "加载中" = "Loading";
 "勾选表示当前设备控制页面关联的是这块开发板。" = "Check to indicate that the current device control page is associated with this board.";
 "单 USB 已接入" = "Single USB plugged in";
-"单 USB 状态" = "Single USB status";
-"单 USB 连接" = "Single USB connection";
+"单 USB 状态" = "Single USB Status";
+"单 USB 连接" = "Single USB Connection";
 "卸载" = "Uninstall";
 "厂家" = "Vendor";
 "厂家名称" = "Manufacturer Name";
@@ -553,7 +553,7 @@
 "当前没有检测到可刷写的 RP2350 设备。" = "No flashable RP2350 device was detected.";
 "当前没有检测到可操作的 RP2350 开发板。" = "No operational RP2350 development boards are currently detected.";
 "当前没有选中的开发板类型。" = "There are currently no selected board types.";
-"当前激活控制设备" = "Currently active control device";
+"当前激活控制设备" = "Active Control Device";
 "当前版本" = "Current Version";
 "当前状态" = "Current status";
 "当前电平：\\(sample.level ? " = "Current level:\\ (sample.level?";
