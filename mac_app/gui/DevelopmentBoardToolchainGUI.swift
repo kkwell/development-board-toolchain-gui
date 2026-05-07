@@ -141,6 +141,54 @@ private enum AppStrings {
     static func englishFallback(for key: String) -> String {
         var result = productNormalized(key)
         let replacements: [(String, String)] = [
+            ("当前开发板仍处于 USB ECM 运行态，但主机 USB 网络尚未恢复完成。请先恢复 USB 网络后再刷写。", "The board is still in USB ECM runtime mode, but the host USB network has not recovered yet. Restore USB networking before flashing."),
+            ("当前开发板仍处于 USB ECM 运行态，但控制服务和 SSH 均不可用。现有刷写链路无法自动切换到 Loader，直接刷写会超时。请先恢复控制服务/SSH，或手动让开发板进入 Loader 模式后再刷写。", "The board is still in USB ECM runtime mode, but neither the control service nor SSH is available. The current flash workflow cannot switch to Loader automatically and would time out. Restore the control service/SSH, or manually put the board into Loader mode before flashing."),
+            ("当前开发板处于 USB ECM 运行态，刷写前会先通过控制服务切换到 Loader。", "The board is in USB ECM runtime mode and will switch to Loader through the control service before flashing."),
+            ("当前开发板处于 USB ECM 运行态，控制服务未响应，但 SSH 可用；刷写前会通过 SSH fallback 请求进入 Loader。", "The board is in USB ECM runtime mode. The control service is not responding, but SSH is available; SSH fallback will request Loader before flashing."),
+            ("当前开发板处于 USB ECM 运行态，但控制服务和 SSH 均不可用。请先恢复控制链路，或手动进入 Loader 后再刷写。", "The board is in USB ECM runtime mode, but both the control service and SSH are unavailable. Restore the control link or enter Loader manually before flashing."),
+            ("当前开发板已处于 Loader 模式，将直接执行刷写。", "The board is already in Loader mode. Flashing will start directly."),
+            ("当前开发板已处于 Maskrom 模式，刷写前会先通过 MiniLoaderAll.bin 拉起 Loader，再继续执行刷写。", "The board is in Maskrom mode. MiniLoaderAll.bin will start Loader before flashing continues."),
+            ("当前已检测到 Rockchip USB 刷写链路，可直接执行刷写。", "Rockchip USB flashing link detected. Flashing can start directly."),
+            ("当前设备已处于 RP2350 单 USB 刷写链路，可直接执行刷写。", "The device is already on the RP2350 single-USB flashing link. Flashing can start directly."),
+            ("当前设备已处于 Loader 模式，可直接执行刷写。", "The device is already in Loader mode. Flashing can start directly."),
+            ("当前设备已通过 USB ECM 连接，可执行刷写。", "The device is connected through USB ECM. Flashing can start."),
+            ("请先连接 TaishanPi，或让开发板进入 Loader / Maskrom / USB ECM 后再执行镜像刷写。", "Connect TaishanPi first, or put the board into Loader / Maskrom / USB ECM before flashing images."),
+            ("请先连接 RP2350 设备，或让开发板进入 RP2350 单 USB / BOOTSEL 后再执行刷写。", "Connect an RP2350 device first, or put the board into RP2350 single-USB / BOOTSEL mode before flashing."),
+            ("请先让设备进入可刷写状态后再执行镜像刷写。", "Put the device into a flashable mode before flashing images."),
+            ("请先让开发板进入可刷写状态后再执行镜像刷写。", "Put the board into a flashable mode before flashing images."),
+            ("当前未检测到可用于刷写的 TaishanPi 连接。请确认开发板已进入 Loader、Maskrom 或 USB ECM 状态。", "No flashable TaishanPi connection was detected. Confirm the board is in Loader, Maskrom, or USB ECM mode."),
+            ("当前未检测到可用于刷写的 RP2350 设备连接。请确认开发板已进入 RP2350 单 USB 或 BOOTSEL 状态。", "No flashable RP2350 device connection was detected. Confirm the board is in RP2350 single-USB or BOOTSEL mode."),
+            ("当前未检测到可用于刷写的开发板连接。请确认开发板已进入可刷写状态。", "No flashable board connection was detected. Confirm the board is in a flashable mode."),
+            ("镜像目录中没有可刷写的镜像文件", "No flashable image files were found in the image directory"),
+            ("镜像文件不存在", "Image file does not exist"),
+            ("未找到 parameter.txt", "parameter.txt was not found"),
+            ("对应镜像文件，期望目录", "image file. Expected directory"),
+            ("未找到", "Not found"),
+            ("仍在后台执行，请等待完成或超时清理后再提交新的刷写任务。", "is still running in the background. Wait for it to finish or for timeout cleanup before submitting another flash task."),
+            ("正在执行，请等待当前刷写任务结束。", "is running. Wait for the current flash task to finish."),
+            ("刷写任务", "Flash task"),
+            ("未发现用户镜像，请先生成或导入。", "No user image found. Generate or import one first."),
+            ("未发现 Mac LLVM 初始镜像，请先挂载或安装 Mac LLVM 离线环境包。", "No Mac LLVM factory image found. Mount or install the Mac LLVM offline environment package first."),
+            ("缺少 Linux GCC 初始镜像时会先自动同步。", "Linux GCC factory images are synced automatically when missing."),
+            ("按 parameter 刷写全部分区", "Flash all partitions from parameter.txt"),
+            ("仅刷 boot", "Flash boot only"),
+            ("仅刷 rootfs", "Flash rootfs only"),
+            ("仅刷 userdata", "Flash userdata only"),
+            ("用户镜像刷写", "User Image Flashing"),
+            ("Mac LLVM 初始镜像恢复", "Mac LLVM Factory Image Restore"),
+            ("Linux GCC 初始镜像恢复", "Linux GCC Factory Image Restore"),
+            ("恢复全部", "Restore All"),
+            ("全部", "All"),
+            ("启动 Logo", "Boot Logo"),
+            ("未选择 logo 文件", "No logo file selected"),
+            ("未选择设备树文件", "No device tree file selected"),
+            ("选择文件", "Choose File"),
+            ("旋转角度", "Rotation"),
+            ("比例", "Scale"),
+            ("更新后直接刷 Boot", "Flash Boot after update"),
+            ("执行 Logo 更新", "Update Logo"),
+            ("执行设备树更新", "Update Device Tree"),
+            ("设备树", "Device Tree"),
             ("本地 DBT Agent", "Local Embed Labs Agent"),
             ("DBT Agent", "Embed Labs Agent"),
             ("开发板", "Board"),
@@ -178,6 +226,12 @@ private enum AppStrings {
         for (source, target) in replacements {
             result = result.replacingOccurrences(of: source, with: target)
         }
+        result = result
+            .replacingOccurrences(of: "：", with: ": ")
+            .replacingOccurrences(of: "，", with: ", ")
+            .replacingOccurrences(of: "。", with: ". ")
+            .replacingOccurrences(of: "；", with: "; ")
+            .replacingOccurrences(of: "、", with: ", ")
         return result
     }
 }
@@ -11324,6 +11378,11 @@ struct OverviewTab: View {
 
 struct FlashTab: View {
     @ObservedObject var vm: ToolkitViewModel
+    @Environment(\.appLanguage) private var appLanguage
+
+    private func localized(_ key: String) -> String {
+        AppStrings.localized(key, language: appLanguage)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -11361,17 +11420,19 @@ struct FlashTab: View {
         let transportSummary = vm.flashTransportSummaryText()
         let stateText = summaryState?.reason ?? (hasImages ? transportSummary : emptyState)
         let dotColor = summaryState != nil ? Color.orange : vm.flashTransportIndicatorColor()
+        let helpText = summaryState?.reason ?? stateText
+        let actionHelpText = summaryState?.reason.map { localized($0) } ?? imageDir.path
 
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .center, spacing: 8) {
-                    Text(title)
+                    Text(localized(title))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.primary)
                     Circle()
                         .fill(dotColor)
                         .frame(width: 8, height: 8)
-                        .help(summaryState?.reason ?? stateText)
+                        .help(localized(helpText))
                     Spacer(minLength: 6)
                     Text(relativePathLabel(imageDir))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -11381,7 +11442,7 @@ struct FlashTab: View {
                         .help(imageDir.path)
                 }
 
-                Text(stateText)
+                Text(localized(stateText))
                     .font(.caption)
                     .foregroundStyle(summaryState != nil ? Color.orange : .secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -11424,7 +11485,7 @@ struct FlashTab: View {
                         compact: true
                     )
                 }
-                .help(summaryState?.reason ?? imageDir.path)
+                .help(actionHelpText)
             }
             .padding(.top, 2)
         }
@@ -14606,30 +14667,35 @@ struct SettingsWindowView: View {
 
 struct CustomizeTab: View {
     @ObservedObject var vm: ToolkitViewModel
+    @Environment(\.appLanguage) private var appLanguage
     private let rotateOptions = ["-90", "0", "90", "180"]
+
+    private func localized(_ key: String) -> String {
+        AppStrings.localized(key, language: appLanguage)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            GroupBox("启动 Logo") {
+            GroupBox(localized("启动 Logo")) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Text(vm.logoPath.isEmpty ? "未选择 logo 文件" : vm.logoPath)
+                        Text(vm.logoPath.isEmpty ? localized("未选择 logo 文件") : vm.logoPath)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .foregroundStyle(vm.logoPath.isEmpty ? .secondary : .primary)
                         Spacer()
-                        Button("选择文件") { vm.browseFile { vm.logoPath = $0 } }
+                        Button(localized("选择文件")) { vm.browseFile { vm.logoPath = $0 } }
                     }
                     HStack {
-                        Text("旋转角度")
-                        Picker("旋转角度", selection: $vm.logoRotate) {
+                        Text(localized("旋转角度"))
+                        Picker(localized("旋转角度"), selection: $vm.logoRotate) {
                             ForEach(rotateOptions, id: \.self) { option in
                                 Text(option).tag(option)
                             }
                         }
                         .labelsHidden()
                         .frame(width: 92)
-                        Text("比例")
+                        Text(localized("比例"))
                         TextField("100", text: $vm.logoScale)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 70)
@@ -14637,29 +14703,29 @@ struct CustomizeTab: View {
                             .foregroundStyle(.secondary)
                         Spacer()
                     }
-                    Toggle("更新后直接刷 Boot", isOn: $vm.logoFlashAfter)
+                    Toggle(localized("更新后直接刷 Boot"), isOn: $vm.logoFlashAfter)
                     HStack {
                         Spacer()
-                        Button("执行 Logo 更新") { vm.updateLogo() }
+                        Button(localized("执行 Logo 更新")) { vm.updateLogo() }
                     }
                 }
                 .padding(.top, 8)
             }
 
-            GroupBox("设备树") {
+            GroupBox(localized("设备树")) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Text(vm.dtsFilePath.isEmpty ? "未选择设备树文件" : vm.dtsFilePath)
+                        Text(vm.dtsFilePath.isEmpty ? localized("未选择设备树文件") : vm.dtsFilePath)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .foregroundStyle(vm.dtsFilePath.isEmpty ? .secondary : .primary)
                         Spacer()
-                        Button("选择文件") { vm.browseFile { vm.dtsFilePath = $0 } }
+                        Button(localized("选择文件")) { vm.browseFile { vm.dtsFilePath = $0 } }
                     }
                     HStack {
-                        Toggle("更新后直接刷 Boot", isOn: $vm.dtsFlashAfter)
+                        Toggle(localized("更新后直接刷 Boot"), isOn: $vm.dtsFlashAfter)
                         Spacer()
-                        Button("执行设备树更新") { vm.updateDTB() }
+                        Button(localized("执行设备树更新")) { vm.updateDTB() }
                     }
                 }
                 .padding(.top, 8)
@@ -14672,6 +14738,11 @@ struct CustomizeTab: View {
 
 struct ActivityTab: View {
     @ObservedObject var vm: ToolkitViewModel
+    @Environment(\.appLanguage) private var appLanguage
+
+    private func localized(_ key: String) -> String {
+        AppStrings.localized(key, language: appLanguage)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -14680,7 +14751,7 @@ struct ActivityTab: View {
                     Button {
                         vm.selectedActivityEntry = nil
                     } label: {
-                        Label("返回列表", systemImage: "chevron.left")
+                        Label(localized("返回列表"), systemImage: "chevron.left")
                     }
                     .buttonStyle(.plain)
                     Spacer()
@@ -14689,7 +14760,7 @@ struct ActivityTab: View {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(text, forType: .string)
                     } label: {
-                        Label("复制全部", systemImage: "doc.on.doc")
+                        Label(localized("复制全部"), systemImage: "doc.on.doc")
                     }
                     .buttonStyle(.plain)
                     Text(entry.timestamp.formatted(date: .omitted, time: .standard))
@@ -14697,10 +14768,10 @@ struct ActivityTab: View {
                         .foregroundStyle(.secondary)
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    Label(entry.title, systemImage: entry.level.symbol)
+                    Label(localized(entry.title), systemImage: entry.level.symbol)
                         .font(.headline)
                         .foregroundStyle(entry.level.color)
-                    Text(entry.message)
+                    Text(localized(entry.message))
                         .font(.subheadline)
                     SelectableDetailTextView(text: entry.detail ?? entry.message)
                         .frame(minHeight: 220)
@@ -14710,7 +14781,7 @@ struct ActivityTab: View {
                 }
             } else {
                 if vm.activities.isEmpty {
-                    Text("暂无活动记录")
+                    Text(localized("暂无活动记录"))
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(Array(vm.activities.prefix(4))) { entry in
