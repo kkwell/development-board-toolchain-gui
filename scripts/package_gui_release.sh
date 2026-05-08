@@ -29,6 +29,10 @@ validate_gui_archive_assets() {
       echo "Archive listing saved to ${listing_path}" >&2
       exit 1
     fi
+    if unzip -p "${archive_path}" "${asset}" | LC_ALL=C grep -a -m1 -q "git-lfs.github.com/spec"; then
+      echo "Release archive contains a Git LFS pointer instead of the real GUI asset: ${asset}" >&2
+      exit 1
+    fi
   done
   echo "Release archive board visual asset validation passed"
 }
