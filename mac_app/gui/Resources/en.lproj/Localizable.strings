@@ -1030,3 +1030,16 @@
 "频率" = "frequency";
 "频率：1.8GHz" = "frequency: 1.8GHz";
 "高" = "High";
+"未选择 .img 镜像文件。" = "No .img image file selected.";
+"请选择 .img 文件。" = "Choose a .img file.";
+"IMG 镜像文件不存在：\\(path)" = "IMG image file does not exist: \\(path)";
+"IMG 镜像文件为空：\\(path)" = "IMG image file is empty: \\(path)";
+"用户 IMG 镜像烧录" = "User IMG Image Flashing";
+"选择 .img 文件" = "Choose .img File";
+"选择一个完整的 TaishanPi .img 镜像文件" = "Choose one complete TaishanPi .img image file";
+"已选择 IMG 镜像：" = "Selected IMG image:";
+"选择 .img 后由底层自动识别 RKFW/RKAF 或 raw 格式并执行全量刷写。" = "After a .img is selected, the runtime detects RKFW/RKAF or raw format and performs a full flash.";
+"会覆盖 eMMC 全部内容；请保持 USB 和供电连接，刷写期间窗口会持续显示进度。" = "This overwrites the whole eMMC. Keep USB and power connected; the progress window stays visible throughout flashing.";
+"全量刷写 IMG" = "Flash IMG";
+"按 .img 镜像执行整机刷写" = "Full flash from the .img image";
+"IMG 全量刷写" = "IMG Full Flash";

@@ -6,6 +6,7 @@ import IOKit
 import SceneKit
 import SwiftUI
 import SystemConfiguration
+import UniformTypeIdentifiers
 import UserNotifications
 
 private enum ToolkitChromeColors {
@@ -168,6 +169,19 @@ private enum AppStrings {
             ("正在执行，请等待当前刷写任务结束。", "is running. Wait for the current flash task to finish."),
             ("刷写任务", "Flash task"),
             ("未发现用户镜像，请先生成或导入。", "No user image found. Generate or import one first."),
+            ("未选择 .img 镜像文件。", "No .img image file selected."),
+            ("请选择 .img 文件。", "Choose a .img file."),
+            ("IMG 镜像文件不存在", "IMG image file does not exist"),
+            ("IMG 镜像文件为空", "IMG image file is empty"),
+            ("用户 IMG 镜像烧录", "User IMG Image Flashing"),
+            ("选择 .img 文件", "Choose .img File"),
+            ("选择一个完整的 TaishanPi .img 镜像文件", "Choose one complete TaishanPi .img image file"),
+            ("已选择 IMG 镜像：", "Selected IMG image:"),
+            ("选择 .img 后由底层自动识别 RKFW/RKAF 或 raw 格式并执行全量刷写。", "After a .img is selected, the runtime detects RKFW/RKAF or raw format and performs a full flash."),
+            ("会覆盖 eMMC 全部内容；请保持 USB 和供电连接，刷写期间窗口会持续显示进度。", "This overwrites the whole eMMC. Keep USB and power connected; the progress window stays visible throughout flashing."),
+            ("全量刷写 IMG", "Flash IMG"),
+            ("按 .img 镜像执行整机刷写", "Full flash from the .img image"),
+            ("IMG 全量刷写", "IMG Full Flash"),
             ("未发现 Mac LLVM 初始镜像，请先挂载或安装 Mac LLVM 离线环境包。", "No Mac LLVM factory image found. Mount or install the Mac LLVM offline environment package first."),
             ("缺少 Linux GCC 初始镜像时会先自动同步。", "Linux GCC factory images are synced automatically when missing."),
             ("按 parameter 刷写全部分区", "Flash all partitions from parameter.txt"),
@@ -1943,6 +1957,7 @@ final class ToolkitViewModel: ObservableObject {
     @Published var logoFlashAfter = true
     @Published var dtsFilePath = ""
     @Published var dtsFlashAfter = true
+    @Published var taishanPiRawImagePath = ""
     @Published var rp2350UF2Path = ""
     @Published var rp2350ReadbackPath = ""
     @Published var rp2350LogLines = "6"
@@ -2938,6 +2953,20 @@ final class ToolkitViewModel: ObservableObject {
         return base
     }
 
+    func rawImageFlashAvailabilityState() -> ActionAvailabilityState {
+        if let reason = activeFlashTaskDisabledReason() {
+            return ActionAvailabilityState(enabled: false, reason: reason)
+        }
+        let base = actionAvailabilityState(for: .flash("all"))
+        guard base.enabled else {
+            return base
+        }
+        if let error = rawImageFlashPrerequisiteError() {
+            return ActionAvailabilityState(enabled: false, reason: error)
+        }
+        return base
+    }
+
     private func currentOperationRoute() -> (boardID: String?, variantID: String?, deviceID: String?) {
         let selectedCandidate = currentControlCandidate
         let boardID = preferredControlBoardID ?? connectedBoardID ?? selectedCandidate?.boardID
@@ -2982,6 +3011,26 @@ final class ToolkitViewModel: ObservableObject {
             guard FileManager.default.fileExists(atPath: imagePath.path) else {
                 return "镜像文件不存在：\(imagePath.path)"
             }
+        }
+        return nil
+    }
+
+    private func rawImageFlashPrerequisiteError() -> String? {
+        let path = taishanPiRawImagePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else {
+            return "未选择 .img 镜像文件。"
+        }
+        guard path.lowercased().hasSuffix(".img") else {
+            return "请选择 .img 文件。"
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            return "IMG 镜像文件不存在：\(path)"
+        }
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+           let size = attributes[.size] as? NSNumber,
+           size.int64Value <= 0 {
+            return "IMG 镜像文件为空：\(path)"
         }
         return nil
     }
@@ -3725,15 +3774,20 @@ final class ToolkitViewModel: ObservableObject {
         boardID: String?,
         variantID: String?,
         deviceID: String? = nil,
-        hostImageDir: String
+        hostImageDir: String? = nil,
+        hostImageFile: String? = nil
     ) async throws -> TaskResponse {
         let resolvedDeviceID = deviceID ?? currentOperationRoute().deviceID
         var payload: [String: Any] = [
             "image_source": source == .factory ? "factory" : "custom",
             "scope": scope,
-            "host_image_dir": hostImageDir,
             "build_mode": taishanPiDevelopmentMode.buildModeArgument
         ]
+        if let hostImageFile, !hostImageFile.isEmpty {
+            payload["host_image_file"] = hostImageFile
+        } else if let hostImageDir, !hostImageDir.isEmpty {
+            payload["host_image_dir"] = hostImageDir
+        }
         if let boardID, !boardID.isEmpty {
             payload["board_id"] = boardID
         }
@@ -8040,6 +8094,56 @@ final class ToolkitViewModel: ObservableObject {
         }
     }
 
+    func flashSelectedRawImage() {
+        Task {
+            let route = currentOperationRoute()
+            let imagePath = taishanPiRawImagePath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let message = await validatePrecondition(.flash("all")) {
+                presentInlineError(message)
+                appendActivity(level: .warning, title: "IMG 全量刷写", message: message)
+                return
+            }
+            if let localError = rawImageFlashPrerequisiteError() {
+                presentInlineError(localError)
+                appendActivity(level: .warning, title: "IMG 全量刷写", message: localError)
+                return
+            }
+            busy = true
+            defer { busy = false }
+            do {
+                await ensureLocalAgentStartedIfNeeded()
+                guard localAgentRunning else {
+                    throw ToolkitGUIError.commandFailed(localAgentUnavailableUserMessage())
+                }
+                clearInlineError()
+                taskPollTask?.cancel()
+                dismissedFinishedTaskIDs.removeAll()
+                currentTask = nil
+                pendingTaskTitle = "IMG 全量刷写"
+                let response = try await postLocalAgentFlashJob(
+                    scope: "raw",
+                    source: .custom,
+                    boardID: route.boardID,
+                    variantID: route.variantID,
+                    deviceID: route.deviceID,
+                    hostImageFile: imagePath
+                )
+                pendingTaskTitle = ""
+                currentTask = response.task
+                let detail = response.task?.log_path ?? imagePath
+                appendActivity(level: .info, title: "IMG 全量刷写", message: "任务已启动", detail: detail)
+                if let taskID = response.task?.id {
+                    pollTask(taskID)
+                }
+            } catch {
+                pendingTaskTitle = ""
+                let detail = error.localizedDescription
+                presentInlineError(detail)
+                appendActivity(level: .error, title: "IMG 全量刷写", message: "执行失败", detail: detail)
+            }
+        }
+    }
+
     func buildSync() {
         Task {
             if let message = await validatePrecondition(.buildSync) {
@@ -9894,10 +9998,16 @@ final class ToolkitViewModel: ObservableObject {
         refreshStatus(silent: true, force: true)
     }
 
-    func browseFile(assign: @escaping (String) -> Void) {
+    func browseFile(allowedFileTypes: [String]? = nil, assign: @escaping (String) -> Void) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
+        if let allowedFileTypes, !allowedFileTypes.isEmpty {
+            let allowedContentTypes = allowedFileTypes.compactMap { UTType(filenameExtension: $0) }
+            if !allowedContentTypes.isEmpty {
+                panel.allowedContentTypes = allowedContentTypes
+            }
+        }
         if let window = NSApp.keyWindow {
             fileDialogActive = true
             panel.beginSheetModal(for: window) { response in
@@ -11491,6 +11601,8 @@ struct FlashTab: View {
                     ? "未发现 Mac LLVM 初始镜像，请先挂载或安装 Mac LLVM 离线环境包。"
                     : "缺少 Linux GCC 初始镜像时会先自动同步。"
             )
+
+            rawImageFlashSection()
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -11578,6 +11690,79 @@ struct FlashTab: View {
                     )
                 }
                 .help(actionHelpText)
+            }
+            .padding(.top, 2)
+        }
+        .groupBoxStyle(.automatic)
+    }
+
+    @ViewBuilder
+    private func rawImageFlashSection() -> some View {
+        let flashState = vm.rawImageFlashAvailabilityState()
+        let imagePath = vm.taishanPiRawImagePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasImagePath = !imagePath.isEmpty
+        let stateText = flashState.reason ?? (hasImagePath ? "已选择 IMG 镜像：" : "选择一个完整的 TaishanPi .img 镜像文件")
+        let dotColor = flashState.enabled ? vm.flashTransportIndicatorColor() : Color.orange
+
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text(localized("用户 IMG 镜像烧录"))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Circle()
+                        .fill(dotColor)
+                        .frame(width: 8, height: 8)
+                        .help(localized(flashState.reason ?? vm.flashTransportSummaryText()))
+                    Spacer(minLength: 6)
+                    Text(hasImagePath ? URL(fileURLWithPath: imagePath).lastPathComponent : localized("未选择 .img 镜像文件。"))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(imagePath)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(localized(stateText))
+                        .font(.caption)
+                        .foregroundStyle(flashState.reason == nil ? .secondary : Color.orange)
+                    if hasImagePath {
+                        Text(imagePath)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(imagePath)
+                    }
+                    Text(localized("选择 .img 后由底层自动识别 RKFW/RKAF 或 raw 格式并执行全量刷写。"))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(localized("会覆盖 eMMC 全部内容；请保持 USB 和供电连接，刷写期间窗口会持续显示进度。"))
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+
+                HStack(spacing: 6) {
+                    ActionTile(
+                        title: "选择 .img 文件",
+                        subtitle: "选择一个完整的 TaishanPi .img 镜像文件",
+                        enabled: true,
+                        disabledReason: nil,
+                        symbol: "doc.badge.plus",
+                        action: { vm.browseFile(allowedFileTypes: ["img"]) { vm.taishanPiRawImagePath = $0 } },
+                        compact: true
+                    )
+                    ActionTile(
+                        title: "全量刷写 IMG",
+                        subtitle: "按 .img 镜像执行整机刷写",
+                        enabled: flashState.enabled,
+                        disabledReason: flashState.reason,
+                        symbol: "externaldrive.badge.timemachine",
+                        action: { vm.flashSelectedRawImage() },
+                        compact: true
+                    )
+                }
             }
             .padding(.top, 2)
         }
