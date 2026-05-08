@@ -19,6 +19,7 @@ WECHAT_QR_SOURCE="${REPO_ROOT}/assets/weixin.JPG"
 PICO2W_PREVIEW_SOURCE="${REPO_ROOT}/assets/Pico2WPreview.png"
 BOARD_ASSETS_SOURCE="${REPO_ROOT}/board_plugins/boards"
 BOARD_ASSETS_DEST="${RES_DIR}/BoardAssets/boards"
+REQUIRE_BOARD_ASSETS="${REQUIRE_BOARD_ASSETS:-1}"
 GUI_RESOURCES_SOURCE="${SCRIPT_DIR}/Resources"
 ICONSET_DIR="${BUILD_DIR}/AppIcon.iconset"
 ICON_MASTER="${BUILD_DIR}/AppIcon-master.png"
@@ -193,6 +194,10 @@ if [[ -d "${BOARD_ASSETS_SOURCE}" ]]; then
     mkdir -p "${BOARD_ASSETS_DEST}/${board_id}"
     ditto "${board_dir}/assets" "${BOARD_ASSETS_DEST}/${board_id}/assets"
   done
+  find "${BOARD_ASSETS_DEST}" -type f | sort
+elif [[ "${REQUIRE_BOARD_ASSETS}" == "1" ]]; then
+  echo "Board visual assets source not found at ${BOARD_ASSETS_SOURCE}" >&2
+  exit 1
 fi
 
 if [[ -d "${GUI_RESOURCES_SOURCE}" ]]; then
