@@ -383,7 +383,7 @@
 "启动采集" = "Starting Acquisition";
 "命令执行中" = "Command Execution";
 "命令未返回可解析结果。请查看活动日志中的详细输出。" = "The command returned no parsable results. Please review the detailed output in the activity log.";
-"嘉立创" = "JLC";
+"嘉立创" = "嘉立创";
 "回放固件环形缓冲" = "Playback Firmware Ring Buffer";
 "固件" = "Firmware";
 "固件版本" = "Firmware Version";
@@ -726,8 +726,8 @@
 "本地 DBT Agent 状态请求失败" = "Local Embed Labs Agent status request failed";
 "本地 DBT Agent 离线" = "Local Embed Labs Agent Offline";
 "本地 DBT Agent 重启任务启动失败" = "Local Embed Labs Agent restart task failed to start";
-"本地 \\(installedVersion!)" = "local \\(installedVersion!)";
-"本地 \\(version)" = "local \\(version)";
+"本地 \\(installedVersion!)" = "Local \\(installedVersion!)";
+"本地 \\(version)" = "Local \\(version)";
 "本地安装" = "localinstall";
 "本地安装任务已提交" = "localinstalltask submitted";
 "本地安装包目录不存在" = "Local install package directory does not exist";

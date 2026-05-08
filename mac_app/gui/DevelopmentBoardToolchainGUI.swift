@@ -225,7 +225,6 @@ private enum AppStrings {
             ("台", "device(s)"),
             ("在线", "Online"),
             ("泰山派", "TaishanPi"),
-            ("嘉立创", "JLC"),
             ("本地 DBT Agent", "Local Embed Labs Agent"),
             ("DBT Agent", "Embed Labs Agent"),
             ("开发板", "Board"),
@@ -16064,6 +16063,14 @@ struct SupportedBoardRowView: View {
     let operation: BoardPluginOperationState
     let action: () -> Void
     let detailAction: () -> Void
+    @Environment(\.appLanguage) private var appLanguage
+
+    private var localVersionText: String {
+        if let installedVersion {
+            return appLanguage == .en ? "Local \(installedVersion)" : "本地 \(installedVersion)"
+        }
+        return AppStrings.localized(bundledIntegrationAvailable ? "应用内置" : "未安装", language: appLanguage)
+    }
 
     @ViewBuilder
     private var actionContent: some View {
@@ -16136,7 +16143,7 @@ struct SupportedBoardRowView: View {
                 Text(remoteVersion)
                     .font(.system(.subheadline, design: .rounded).weight(.semibold))
                     .lineLimit(1)
-                Text(installedVersion == nil ? (bundledIntegrationAvailable ? "应用内置" : "未安装") : "本地 \(installedVersion!)")
+                Text(localVersionText)
                     .font(.system(.caption2, design: .rounded))
                     .foregroundStyle((installedVersion == nil && !bundledIntegrationAvailable) ? Color.secondary : Color.green)
                     .lineLimit(1)
@@ -16256,6 +16263,7 @@ struct SupportedBoardDetailView: View {
     let hideOuterHero: Binding<Bool>
     let backAction: () -> Void
     let showDetachedModel: (SupportedBoard) -> Void
+    @Environment(\.appLanguage) private var appLanguage
     @State private var selectedSection: SupportedBoardDetailSection = .overview
     @State private var expandedSection: SupportedBoardDetailSection = .overview
     @State private var navShowsFullLabel = false
@@ -16283,6 +16291,20 @@ struct SupportedBoardDetailView: View {
         default:
             return board.integrationReady ? "控制能力已可用" : "等待后续接入"
         }
+    }
+
+    private var localPluginDetailText: String {
+        if let installedVersion {
+            return appLanguage == .en ? "Local \(installedVersion)" : "本地 \(installedVersion)"
+        }
+        return AppStrings.localized(
+            bundledIntegrationAvailable ? "应用内置，无需单独安装" : "本地未安装",
+            language: appLanguage
+        )
+    }
+
+    private func localized(_ key: String) -> String {
+        AppStrings.localized(key, language: appLanguage)
     }
 
     private var availableSections: [SupportedBoardDetailSection] {
@@ -16714,9 +16736,7 @@ struct SupportedBoardDetailView: View {
                     detailMetricCard(
                         title: "插件版本",
                         value: remoteVersion,
-                        detail: installedVersion == nil
-                            ? (bundledIntegrationAvailable ? "应用内置，无需单独安装" : "本地未安装")
-                            : "本地 \(installedVersion!)"
+                        detail: localPluginDetailText
                     )
                     detailMetricCard(
                         title: "集成状态",
@@ -16798,15 +16818,15 @@ struct SupportedBoardDetailView: View {
 
     private func detailMetricCard(title: String, value: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
+            Text(localized(title))
                 .font(.system(.caption, design: .rounded).weight(.bold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
-            Text(value)
+            Text(localized(value))
                 .font(.system(.subheadline, design: .rounded).weight(.semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
-            Text(detail)
+            Text(localized(detail))
                 .font(.system(.caption, design: .rounded))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
