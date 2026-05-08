@@ -200,6 +200,56 @@ private enum AppStrings {
             ("初始程序 UF2 文件不存在", "Initial firmware UF2 file does not exist"),
             ("当前未找到初始程序 UF2", "No initial firmware UF2 found"),
             ("后台处理中", "Processing in background"),
+            ("等待操作", "Waiting for action"),
+            ("状态探测", "Status Probe"),
+            ("状态跟踪", "Status Tracking"),
+            ("状态监控", "Status Monitor"),
+            ("刷新连接状态失败", "Failed to refresh connection status"),
+            ("刷新板卡状态失败", "Failed to refresh board status"),
+            ("刷新主机状态失败", "Failed to refresh host status"),
+            ("正在刷新开发板状态", "refreshing board status"),
+            ("本次保留当前页面状态", "keeping the current page state this time"),
+            ("状态刷新暂时超时", "status refresh temporarily timed out"),
+            ("后台状态探测失败", "Background status probe failed"),
+            ("设备 IP", "Device IP"),
+            ("当前没有可复制的设备地址", "No device address is available to copy"),
+            ("IP 地址已复制", "IP address copied"),
+            ("USB 网络", "USB Network"),
+            ("检测到 USB ECM，正在自动恢复主机网络", "USB ECM detected, restoring host network automatically"),
+            ("已自动恢复", "Recovered automatically"),
+            ("自动恢复未完成，可手动重试", "Automatic recovery did not finish; retry manually"),
+            ("自动恢复失败，可手动点击恢复", "Automatic recovery failed; click recover manually"),
+            ("插件目录", "Plugin Catalog"),
+            ("插件安装", "Plugin Install"),
+            ("插件删除", "Plugin Remove"),
+            ("插件安装完成", "plugin installed"),
+            ("插件已删除", "plugin removed"),
+            ("远端插件目录同步失败", "Failed to sync remote plugin catalog"),
+            ("任务已启动", "Task started"),
+            ("任务已完成", "Task completed"),
+            ("执行失败", "Execution failed"),
+            ("执行超时", "Execution timed out"),
+            ("后台等待超时", "Background wait timed out"),
+            ("后台轮询失败", "Background polling failed"),
+            ("后台继续确认", "Continuing confirmation in background"),
+            ("已转入后台等待", "Moved to background wait"),
+            ("仍在后台确认状态", "Still confirming status in background"),
+            ("已建立实时订阅", "Live subscription established"),
+            ("主机预检", "Host Preflight"),
+            ("网络权限安装", "Network Permission Install"),
+            ("当前登录用户为空", "Current login user is empty"),
+            ("正在请求系统管理员授权", "Requesting administrator authorization"),
+            ("安装 OpenCode 插件", "Install OpenCode Plugin"),
+            ("未检测到 npm", "npm was not detected"),
+            ("SSH 授权", "SSH Authorization"),
+            ("正在确认控制服务或 SSH 链路", "Checking control service or SSH link"),
+            ("控制链路已就绪，正在提交任务", "Control link is ready, submitting task"),
+            ("设备重启", "Device Reboot"),
+            ("开发版构建并刷写", "Development Build and Flash"),
+            ("开发版构建", "Development Build"),
+            ("RP2350 状态检测", "RP2350 Status Check"),
+            ("Flash 回读", "Flash Readback"),
+            ("初始镜像准备失败", "Factory image preparation failed"),
             ("设备已识别", "Device Detected"),
             ("设备已断开", "Device Disconnected"),
             ("等待识别", "Waiting for Detection"),
@@ -17592,6 +17642,7 @@ struct TaskOverlayView: View {
 struct ContentView: View {
     @ObservedObject var vm: ToolkitViewModel
     let showDetachedModel: (SupportedBoard) -> Void
+    @Environment(\.appLanguage) private var appLanguage
     @State private var selectedTab = 0
     @State private var detailBoard: SupportedBoard?
     @State private var boardCatalogViewID = UUID()
@@ -17601,11 +17652,15 @@ struct ContentView: View {
     @State private var rebootPromptStatus = "正在下发重启指令…"
 
     var footerMessage: String {
-        vm.inlineErrorMessage.isEmpty ? vm.lastActionSummary : vm.inlineErrorMessage
+        localized(vm.inlineErrorMessage.isEmpty ? vm.lastActionSummary : vm.inlineErrorMessage)
     }
 
     var footerIsError: Bool {
         !vm.inlineErrorMessage.isEmpty
+    }
+
+    private func localized(_ key: String) -> String {
+        AppStrings.localized(key, language: appLanguage)
     }
 
     var heroAction: (() -> Void)? {
