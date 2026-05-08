@@ -6023,7 +6023,10 @@ final class ToolkitViewModel: ObservableObject {
         guard (task.action ?? "") == "flash", isTaishanBoardContext() else {
             return nil
         }
-        return isTaishanLoaderModeContext() ? 45 : 90
+        // TaishanPi full-image flashing can spend several minutes writing and then waiting
+        // for USB ECM to re-enumerate. Keep the foreground progress visible so users do
+        // not lose feedback during the most failure-prone part of the workflow.
+        return nil
     }
 
     private func clearActiveBackgroundFlashTaskIfMatches(_ taskID: String) {
@@ -6534,6 +6537,9 @@ final class ToolkitViewModel: ObservableObject {
         if task.status == "finished" {
             if task.ok == true {
                 if isFlashLikeAction(task.action) {
+                    if let progressText = taskMetadataText(task.progress_text) {
+                        return progressText
+                    }
                     return "刷写完成，已下发设备重启"
                 }
                 return "执行完成"
