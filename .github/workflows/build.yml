@@ -46,10 +46,13 @@ jobs:
           )
           for asset in "${required_assets[@]}"; do
             grep -Fx "${asset}" release-archive-contents.txt
-            if unzip -p "${archive}" "${asset}" | LC_ALL=C grep -a -m1 -q "git-lfs.github.com/spec"; then
+            unzip -p "${archive}" "${asset}" > asset-probe.tmp
+            if LC_ALL=C grep -a -q "git-lfs.github.com/spec" asset-probe.tmp; then
+              rm -f asset-probe.tmp
               echo "Packaged asset is still a Git LFS pointer: ${asset}" >&2
               exit 1
             fi
+            rm -f asset-probe.tmp
           done
 
       - name: Print build log
