@@ -5376,7 +5376,7 @@ final class ToolkitViewModel: ObservableObject {
     }
 
     private func preferredToolkitManifestURL() -> String {
-        "https://github.com/kkwell/development-board-toolchain/releases/latest/download/toolkit-manifest.json"
+        "https://github.com/kkwell/development-board-toolchain-gui/releases/latest/download/toolkit-manifest.json"
     }
 
     private func toolkitUpdateEnvironmentOverrides() -> [String: String] {
@@ -7524,6 +7524,9 @@ final class ToolkitViewModel: ObservableObject {
             } catch {
                 let detail = error.localizedDescription
                 pendingTaskTitle = ""
+                if title == "软件更新" || title == "初始镜像更新" {
+                    updaterLastDetail = detail
+                }
                 presentInlineError(detail)
                 appendActivity(level: .error, title: title, message: "执行失败", detail: detail)
                 busy = false
